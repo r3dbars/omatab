@@ -1,0 +1,11 @@
+[Addon]
+Name=Tilde Linux Proof
+Comment=Minimal inline writing suggestion proof for Fcitx5
+Type=SharedLibrary
+Library=libtilde
+Category=InputMethod
+Version=@PROJECT_VERSION@
+
+[Addon/Dependencies]
+0=core:5.1.0
+

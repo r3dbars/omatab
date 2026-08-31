@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "accept-inline-suggestion",
+      "initial_text": "Tilde",
+      "keys": ["Tab"],
+      "expected_text": "Tilde — Tilde is working",
+      "expected_visible_suggestion": false
+    },
+    {
+      "id": "dismiss-inline-suggestion",
+      "initial_text": "Tilde",
+      "keys": ["Escape"],
+      "expected_text": "Tilde",
+      "expected_visible_suggestion": false
+    },
+    {
+      "id": "tab-without-suggestion-is-native",
+      "initial_text": "",
+      "keys": ["Tab"],
+      "expected_text": "",
+      "expected_native_tab": true
+    }
+  ]
+}

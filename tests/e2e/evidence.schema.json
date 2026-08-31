@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tilde GUI test evidence",
+  "type": "object",
+  "required": ["scenario", "application", "actual_text", "passed"],
+  "properties": {
+    "scenario": {"type": "string"},
+    "application": {"type": "string"},
+    "actual_text": {"type": "string"},
+    "screenshot": {"type": "string"},
+    "model": {"type": ["string", "null"]},
+    "latency_ms": {"type": ["number", "null"], "minimum": 0},
+    "passed": {"type": "boolean"},
+    "notes": {"type": "string"}
+  },
+  "additionalProperties": false
+}
