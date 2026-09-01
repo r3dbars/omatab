@@ -24,10 +24,12 @@ minutes. The proof fallback is ` — Tilde is working`. Each word accepted with
 The current visual experiment renders the continuation with Fcitx's
 `Bold`/active style, directly after the normal caret with no boundary marker.
 
-For this English-layout proof, Tilde owns plain printable keys as a short IME
-composition and commits them on acceptance, dismissal, or an editing boundary.
-Dead-key and composed-layout handling is intentionally deferred until the input
-boundary passes across the initial application matrix.
+For this English-layout proof, Tilde commits plain printable keys immediately
+and keeps only its unaccepted continuation in IME preedit. This prevents
+toolkits without formatted-preedit support from styling the user's real text as
+an unfinished composition. Dead-key and composed-layout handling is
+intentionally deferred until the input boundary passes across the initial
+application matrix.
 
 ## Validation status
 
@@ -40,8 +42,8 @@ boundary passes across the initial application matrix.
 - Exact Tab acceptance is not yet proven end to end.
 - The GUI runner requires `ydotool`; `wtype` bypasses the Fcitx path and is not
   a valid input-method test.
-- The model currently sees only the active Tilde composition, not the full
-  document or surrounding application context.
+- The model currently sees only text typed through the active Tilde context,
+  not the full document or surrounding application context.
 
 ## Build and install
 

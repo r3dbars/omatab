@@ -34,7 +34,7 @@ namespace {
 constexpr char kSuggestion[] = " — Tilde is working";
 
 struct TildeState final : fcitx::InputContextProperty {
-    std::string buffer;
+    std::string context;
     std::string remainingSuggestion;
     std::uint64_t revision = 0;
 };
@@ -126,14 +126,12 @@ void clearSuggestion(fcitx::InputContext *inputContext) {
 }
 
 void showSuggestion(fcitx::InputContext *inputContext,
-                    const std::string &buffer,
                     const std::string &remainingSuggestion) {
     fcitx::Text preedit;
-    preedit.append(buffer);
     preedit.append(
         remainingSuggestion,
         {fcitx::TextFormatFlag::Bold, fcitx::TextFormatFlag::DontCommit});
-    preedit.setCursor(buffer.size());
+    preedit.setCursor(0);
 
     if (inputContext->capabilityFlags().test(fcitx::CapabilityFlag::Preedit)) {
         inputContext->inputPanel().setClientPreedit(preedit);
@@ -206,13 +204,12 @@ public:
                 }
                 auto *state = inputContext->propertyFor(&stateFactory_);
                 if (!tilde::suggestionRequestIsCurrent(
-                        state->revision, state->buffer, job.revision,
+                        state->revision, state->context, job.revision,
                         job.prefix)) {
                     return;
                 }
                 state->remainingSuggestion = std::move(result.suggestion);
-                showSuggestion(inputContext, state->buffer,
-                               state->remainingSuggestion);
+                showSuggestion(inputContext, state->remainingSuggestion);
             });
     }
 
@@ -235,62 +232,67 @@ public:
         auto *inputContext = event.inputContext();
         auto *state = inputContext->propertyFor(&stateFactory_);
 
+        if (inputContext->capabilityFlags().test(
+                fcitx::CapabilityFlag::PasswordOrSensitive)) {
+            return;
+        }
+
         switch (tilde::decide(!state->remainingSuggestion.empty(),
                               classify(event.key()))) {
         case tilde::Effect::AcceptNextWord: {
             ++state->revision;
             const auto length =
                 tilde::nextWordLength(state->remainingSuggestion);
-            state->buffer.append(state->remainingSuggestion, 0, length);
+            auto accepted = state->remainingSuggestion.substr(0, length);
             state->remainingSuggestion.erase(0, length);
             if (state->remainingSuggestion.empty()) {
-                if (!state->buffer.empty() && state->buffer.back() != ' ') {
-                    state->buffer.push_back(' ');
+                if (!accepted.empty() && accepted.back() != ' ') {
+                    accepted.push_back(' ');
                 }
-                inputContext->commitString(state->buffer);
-                state->buffer.clear();
+            }
+            inputContext->commitString(accepted);
+            state->context += accepted;
+            if (state->remainingSuggestion.empty()) {
                 clearSuggestion(inputContext);
             } else {
-                showSuggestion(inputContext, state->buffer,
-                               state->remainingSuggestion);
+                showSuggestion(inputContext, state->remainingSuggestion);
             }
             event.filterAndAccept();
             return;
         }
         case tilde::Effect::AcceptFullSuggestion:
             ++state->revision;
-            inputContext->commitString(state->buffer +
-                                       state->remainingSuggestion);
-            state->buffer.clear();
+            inputContext->commitString(state->remainingSuggestion);
+            state->context += state->remainingSuggestion;
             state->remainingSuggestion.clear();
             clearSuggestion(inputContext);
             event.filterAndAccept();
             return;
         case tilde::Effect::DismissSuggestion:
             ++state->revision;
-            inputContext->commitString(state->buffer);
-            state->buffer.clear();
             state->remainingSuggestion.clear();
             clearSuggestion(inputContext);
             event.filterAndAccept();
             return;
         case tilde::Effect::ClearSuggestion:
             ++state->revision;
-            inputContext->commitString(state->buffer);
-            state->buffer.clear();
+            state->context.clear();
             state->remainingSuggestion.clear();
             clearSuggestion(inputContext);
             return;
-        case tilde::Effect::ShowSuggestion:
-            state->buffer += printableText(event.key());
+        case tilde::Effect::ShowSuggestion: {
+            const auto typed = printableText(event.key());
+            clearSuggestion(inputContext);
+            state->context += typed;
+            inputContext->commitString(typed);
             ++state->revision;
             state->remainingSuggestion = kSuggestion;
-            showSuggestion(inputContext, state->buffer,
-                           state->remainingSuggestion);
+            showSuggestion(inputContext, state->remainingSuggestion);
             completionWorker_->request(inputContext->uuid(), state->revision,
-                                       state->buffer);
+                                       state->context);
             event.filterAndAccept();
             return;
+        }
         case tilde::Effect::PassThrough:
             return;
         }
@@ -299,8 +301,7 @@ public:
     void reset(const InputMethodEntry &, InputContextEvent &event) override {
         auto *state = event.inputContext()->propertyFor(&stateFactory_);
         ++state->revision;
-        event.inputContext()->commitString(state->buffer);
-        state->buffer.clear();
+        state->context.clear();
         state->remainingSuggestion.clear();
         clearSuggestion(event.inputContext());
     }
