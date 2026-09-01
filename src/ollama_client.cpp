@@ -61,6 +61,17 @@ Json::Value configuredKeepAlive() {
                : Json::Value("30m");
 }
 
+bool configuredFim() {
+    const auto *value = std::getenv("TILDE_FIM");
+    return value && (std::string_view(value) == "1" ||
+                     std::string_view(value) == "true");
+}
+
+std::string fimPrompt(std::string_view prefix, std::string_view suffix) {
+    return "<|fim_prefix|>" + std::string(prefix) + "<|fim_suffix|>" +
+           std::string(suffix) + "<|fim_middle|>";
+}
+
 std::size_t appendResponse(char *data, std::size_t size, std::size_t count,
                            void *destination) {
     const auto bytes = size * count;
@@ -77,11 +88,15 @@ std::string buildOllamaRequest(std::string_view model,
                                std::string_view suffix) {
     Json::Value request;
     request["model"] = std::string(model);
-    request["prompt"] = std::string(prefix);
-    request["raw"] = true;
-    if (!suffix.empty()) {
-        request["suffix"] = std::string(suffix);
+    if (configuredFim()) {
+        request["prompt"] = fimPrompt(prefix, suffix);
+    } else {
+        request["prompt"] = std::string(prefix);
+        if (!suffix.empty()) {
+            request["suffix"] = std::string(suffix);
+        }
     }
+    request["raw"] = true;
     request["stream"] = false;
     request["keep_alive"] = configuredKeepAlive();
     request["options"]["num_predict"] = static_cast<Json::Int64>(
@@ -93,6 +108,8 @@ std::string buildOllamaRequest(std::string_view model,
     request["options"]["top_p"] =
         configuredNumber("TILDE_TOP_P", 0.9, 0.0, 1.0);
     request["options"]["stop"].append("\n");
+    request["options"]["stop"].append("<|fim_pad|>");
+    request["options"]["stop"].append("<|endoftext|>");
 
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -105,13 +122,18 @@ std::string buildOllamaContextRequest(std::string_view model,
                                       std::string_view visibleContext) {
     Json::Value request;
     request["model"] = std::string(model);
-    request["prompt"] =
+    const auto contextualPrefix =
         "Reference text from the active window (background only):\n" +
         std::string(visibleContext) +
         "\n\nText currently being written (continue from its final character):\n" +
         std::string(prefix);
-    if (!suffix.empty()) {
-        request["suffix"] = std::string(suffix);
+    if (configuredFim()) {
+        request["prompt"] = fimPrompt(contextualPrefix, suffix);
+    } else {
+        request["prompt"] = contextualPrefix;
+        if (!suffix.empty()) {
+            request["suffix"] = std::string(suffix);
+        }
     }
     request["raw"] = true;
     request["stream"] = false;
@@ -126,6 +148,8 @@ std::string buildOllamaContextRequest(std::string_view model,
         configuredNumber("TILDE_TOP_P", 0.9, 0.0, 1.0);
     request["options"]["stop"].append("\n");
     request["options"]["stop"].append("<think>");
+    request["options"]["stop"].append("<|fim_pad|>");
+    request["options"]["stop"].append("<|endoftext|>");
 
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -287,8 +311,11 @@ OllamaResult OllamaClient::completeWithContext(
     if (status == CURLE_OK) {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.statusCode);
         if (result.statusCode == 200) {
-            result.suggestion = ensureInsertionBoundary(
-                prefix, parseOllamaSuggestion(responseBody));
+            result.suggestion = parseOllamaSuggestion(responseBody);
+            if (!configuredFim()) {
+                result.suggestion = ensureInsertionBoundary(
+                    prefix, std::move(result.suggestion));
+            }
         } else {
             result.error = "Ollama returned HTTP " +
                            std::to_string(result.statusCode);

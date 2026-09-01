@@ -44,6 +44,11 @@ every minute, including after Ollama restarts. Enable it with:
 systemctl --user enable --now tilde-model-warm.timer
 ```
 
+Set `TILDE_FIM=1` for models with native `<|fim_prefix|>`, `<|fim_suffix|>`,
+and `<|fim_middle|>` tokens. This lets Tilde complete a partial current word
+and fill text at the exact caret while conditioning on text after it. The live
+Qwen3.5 9B Base setup supports this mode.
+
 ## Private telemetry
 
 Set `TILDE_LOG_PATH` to enable a local JSONL flight recorder. Each record is

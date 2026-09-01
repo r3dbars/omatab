@@ -77,6 +77,31 @@ int main() {
            "runtime setting keeps the model resident indefinitely");
     unsetenv("TILDE_KEEP_ALIVE");
 
+    setenv("TILDE_FIM", "1", 1);
+    const auto fimRequest = tilde::buildOllamaRequest(
+        "test-model", "The quick brown fo", " jumped away.");
+    Json::Value parsedFimRequest;
+    std::istringstream fimInput(fimRequest);
+    expect(Json::parseFromStream(reader, fimInput, &parsedFimRequest,
+                                 &errors) &&
+               parsedFimRequest["prompt"].asString() ==
+                   "<|fim_prefix|>The quick brown fo<|fim_suffix|> jumped "
+                   "away.<|fim_middle|>",
+           "FIM request preserves the partial word and text after the caret");
+    expect(!parsedFimRequest.isMember("suffix"),
+           "FIM request bypasses Ollama's unsupported insert field");
+    const auto fimContextRequest = tilde::buildOllamaContextRequest(
+        "test-model", "partial wo", " after", "visible context");
+    Json::Value parsedFimContextRequest;
+    std::istringstream fimContextInput(fimContextRequest);
+    expect(Json::parseFromStream(reader, fimContextInput,
+                                 &parsedFimContextRequest, &errors) &&
+               parsedFimContextRequest["prompt"].asString().find(
+                   "partial wo<|fim_suffix|> after<|fim_middle|>") !=
+                   std::string::npos,
+           "OCR-aware FIM request completes at the exact caret");
+    unsetenv("TILDE_FIM");
+
     const auto contextRequest = tilde::buildOllamaContextRequest(
         "context-model", "before caret", "after caret", "visible label");
     Json::Value parsedContextRequest;
