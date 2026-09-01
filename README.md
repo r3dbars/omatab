@@ -20,11 +20,39 @@ dismisses it.
 
 The fast completion model is `qwen2.5-coder:1.5b-base`. When visible OCR
 context is available, Tilde routes through `qwen2.5:1.5b` to fuse that context
-with the exact text before and after the caret. Requests begin after a 120 ms
+with the exact text before and after the caret. Both paths use raw continuation
+prompts rather than chat framing so the model completes the user's writing
+instead of replying to it. Requests begin after a 120 ms
 typing pause, generate at most 16 tokens, and keep models loaded for 30 minutes.
 Each word accepted with `Tab` includes one trailing space; the final word also
 adds a trailing space. Pending, failed, timed-out, and empty model requests show
 no suggestion, leaving native `Tab` behavior intact.
+
+Set `TILDE_MODEL` and `TILDE_CONTEXT_MODEL` in the Fcitx5 service environment
+to test alternate completion and OCR-context models without rebuilding. Both
+paths use an 8K context window. The main tuning controls are
+`TILDE_DEBOUNCE_MS` (default `120`), `TILDE_NUM_PREDICT` (`16`),
+`TILDE_TEMPERATURE` (`0.2`), and `TILDE_TOP_P` (`0.9`). Operational controls
+are `TILDE_NUM_CTX` (`8192`) and `TILDE_TIMEOUT_MS` (`2500`). Invalid or
+out-of-range values safely fall back to these defaults.
+
+## Private telemetry
+
+Set `TILDE_LOG_PATH` to enable a local JSONL flight recorder. Each record is
+written with mode `0600`; the parent directory should be mode `0700`. Logs
+include full textbox/OCR context, exact model requests and responses, latency,
+errors, and suggestion outcomes including word/full acceptance, dismissal,
+typed-over, stale, cleared, and reset states. Sensitive input contexts and
+blocked password-manager windows remain excluded by Tilde's existing safety
+gate. The log rotates to `.1` at 50 MiB by default; override the byte limit with
+`TILDE_LOG_MAX_BYTES` (1 MiB to 1 GiB).
+
+Because these records can contain private writing, they stay local and must not
+be committed or uploaded. Generate an agent-readable quality summary with:
+
+```bash
+./scripts/telemetry-report.sh
+```
 
 The current visual experiment renders the continuation with Fcitx's
 `Bold`/active style, directly after the normal caret with no boundary marker.

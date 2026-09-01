@@ -8,6 +8,10 @@ namespace tilde {
 struct OllamaResult {
     std::string suggestion;
     std::string error;
+    std::string model;
+    std::string requestJson;
+    std::string responseJson;
+    double latencyMs = 0.0;
     long statusCode = 0;
 };
 
@@ -38,7 +42,7 @@ public:
 private:
     std::string endpoint_;
     std::string model_;
-    std::string contextEndpoint_ = "http://127.0.0.1:11434/api/chat";
+    std::string contextEndpoint_ = "http://127.0.0.1:11434/api/generate";
     std::string contextModel_ = "qwen2.5:1.5b";
 };
 

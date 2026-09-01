@@ -98,27 +98,31 @@ bool ocrAllowedForWindow(const ActiveWindow &window) {
 }
 
 std::string OcrContextProvider::context() {
-    const auto window = parseActiveWindow(
+    activeWindow_ = parseActiveWindow(
         commandOutput("hyprctl activewindow -j 2>/dev/null"));
-    if (!ocrAllowedForWindow(window)) {
+    if (!ocrAllowedForWindow(activeWindow_)) {
         return {};
     }
 
     const auto now = std::chrono::steady_clock::now();
-    if (window.address == cachedAddress_ && !cachedText_.empty() &&
+    if (activeWindow_.address == cachedAddress_ && !cachedText_.empty() &&
         now - capturedAt_ < kOcrCacheDuration) {
         return cachedText_;
     }
 
     std::ostringstream command;
-    command << "grim -g '" << window.x << ',' << window.y << ' '
-            << window.width << 'x' << window.height
+    command << "grim -g '" << activeWindow_.x << ',' << activeWindow_.y << ' '
+            << activeWindow_.width << 'x' << activeWindow_.height
             << "' - | tesseract stdin stdout --oem 1 --psm 6 -l eng "
                "--dpi 180 -c preserve_interword_spaces=1 2>/dev/null";
     cachedText_ = normalizeOcr(commandOutput(command.str()));
-    cachedAddress_ = window.address;
+    cachedAddress_ = activeWindow_.address;
     capturedAt_ = now;
     return cachedText_;
+}
+
+const ActiveWindow &OcrContextProvider::activeWindow() const {
+    return activeWindow_;
 }
 
 } // namespace tilde

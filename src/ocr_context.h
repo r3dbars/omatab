@@ -23,8 +23,10 @@ bool ocrAllowedForWindow(const ActiveWindow &window);
 class OcrContextProvider {
 public:
     std::string context();
+    const ActiveWindow &activeWindow() const;
 
 private:
+    ActiveWindow activeWindow_;
     std::string cachedAddress_;
     std::string cachedText_;
     std::chrono::steady_clock::time_point capturedAt_{};

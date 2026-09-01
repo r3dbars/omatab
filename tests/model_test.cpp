@@ -1,13 +1,17 @@
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <json/json.h>
 
 #include "context.h"
 #include "ocr_context.h"
 #include "ollama_client.h"
+#include "telemetry.h"
 
 namespace {
 
@@ -42,8 +46,22 @@ int main() {
            "request carries fill-in-the-middle suffix");
     expect(!parsedRequest["stream"].asBool(),
            "request disables streaming");
+    expect(parsedRequest["raw"].asBool(),
+           "request bypasses chat templates");
     expect(parsedRequest["options"]["num_predict"].asInt() == 16,
            "request caps output tokens");
+    expect(parsedRequest["options"]["num_ctx"].asInt() == 8192,
+           "request uses the tested context window");
+
+    setenv("TILDE_NUM_PREDICT", "12", 1);
+    const auto tunedRequest = tilde::buildOllamaRequest("test-model", "text");
+    Json::Value parsedTunedRequest;
+    std::istringstream tunedInput(tunedRequest);
+    expect(Json::parseFromStream(reader, tunedInput, &parsedTunedRequest,
+                                 &errors) &&
+               parsedTunedRequest["options"]["num_predict"].asInt() == 12,
+           "runtime tuning overrides request parameters");
+    unsetenv("TILDE_NUM_PREDICT");
 
     const auto contextRequest = tilde::buildOllamaContextRequest(
         "context-model", "before caret", "after caret", "visible label");
@@ -52,12 +70,16 @@ int main() {
     expect(Json::parseFromStream(reader, contextInput, &parsedContextRequest,
                                  &errors),
            "context request is valid JSON");
-    expect(parsedContextRequest["messages"].size() == 2,
-           "context request carries system and user messages");
-    expect(parsedContextRequest["messages"][1]["content"]
-                   .asString()
-                   .find("visible label") != std::string::npos,
+    expect(parsedContextRequest["raw"].asBool(),
+           "context request bypasses chat templates");
+    expect(parsedContextRequest["prompt"].asString().find("visible label") !=
+               std::string::npos,
            "context request carries visible OCR text");
+    expect(parsedContextRequest["prompt"].asString().find("before caret") !=
+               std::string::npos,
+           "context request ends with textbox prefix");
+    expect(parsedContextRequest["suffix"].asString() == "after caret",
+           "context request carries textbox suffix");
     expect(tilde::ensureInsertionBoundary("we should", "continue") ==
                " continue",
            "context completion inserts a word boundary");
@@ -78,6 +100,9 @@ int main() {
            "blank suggestion is rejected");
     expect(tilde::sanitizeSuggestion(" okay<|endoftext|>") == " okay",
            "model control tokens are removed");
+    expect(tilde::sanitizeSuggestion(" useful text<think>internal") ==
+               " useful text",
+           "thinking spillover is removed");
 
     const auto structured = tilde::buildContextWindow(
         "Earlier text. Cursor here. Later text.", 26, true, "fallback", 4096,
@@ -115,6 +140,28 @@ int main() {
         R"({"address":"0xdef","class":"1Password","title":"Vault","at":[0,0],"size":[800,600]})");
     expect(!tilde::ocrAllowedForWindow(passwordWindow),
            "password manager window blocks OCR");
+
+    const auto telemetryPath =
+        "/tmp/tilde-telemetry-test-" + std::to_string(getpid()) + ".jsonl";
+    setenv("TILDE_LOG_PATH", telemetryPath.c_str(), 1);
+    {
+        tilde::TelemetryRecorder telemetry;
+        Json::Value event;
+        event["type"] = "test";
+        event["private_text"] = "local only";
+        telemetry.record(std::move(event));
+    }
+    struct stat telemetryStatus {};
+    expect(stat(telemetryPath.c_str(), &telemetryStatus) == 0 &&
+               (telemetryStatus.st_mode & 0777) == 0600,
+           "telemetry file is owner-only");
+    std::ifstream telemetryInput(telemetryPath);
+    std::string telemetryLine;
+    std::getline(telemetryInput, telemetryLine);
+    expect(telemetryLine.find("local only") != std::string::npos,
+           "telemetry records full event data");
+    unlink(telemetryPath.c_str());
+    unsetenv("TILDE_LOG_PATH");
 
     if (std::getenv("TILDE_LIVE_OCR_TEST")) {
         tilde::OcrContextProvider provider;
