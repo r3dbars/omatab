@@ -14,8 +14,8 @@ duplicated, lost, or whether a key was consumed incorrectly.
 3. **GUI-agent tests** launch a disposable native editor under Hyprland, select
    Tilde, type like a person, press Tab/Escape, capture a screenshot, and compare
    the final text with `tests/e2e/scenarios.json`.
-4. **Local-model tests** send frozen contexts to the local suggestion daemon and
-   record response text, time-to-first-token, total latency, and cancellation.
+4. **Local-model tests** verify Ollama request JSON, response parsing,
+   sanitization, stale-response rejection, and record live endpoint latency.
 5. **GPT review** scores usefulness, style fit, and repetition from saved model
    outputs. GPT reviews only artifacts from a completed deterministic run.
 
@@ -30,12 +30,13 @@ an agent can diagnose the failure instead of merely retrying it.
 ./scripts/test-gui.sh
 ```
 
-The first command implements lane 1 and build-artifact validation. The GUI
+The first command implements lanes 1 and 4 plus build-artifact validation. The GUI
 runner isolates a disposable Omawrite document and restores `keyboard-us` on
 exit, but currently stops before injection. Wayland `wtype` events bypass the
 Fcitx input-method path, so lane 3 requires an evdev-level `ydotool` sequence.
-Native editor/browser coverage and the Fcitx test frontend remain required
-before model inference is connected.
+Native editor/browser coverage and the Fcitx test frontend remain required for
+fully automated end-to-end evidence. The live model-backed path has been
+manually demonstrated in Omawrite.
 
 ## Release gate
 

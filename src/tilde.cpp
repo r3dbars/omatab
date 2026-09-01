@@ -1,6 +1,17 @@
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
+#include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/keysym.h>
 #include <fcitx/addonfactory.h>
@@ -14,6 +25,7 @@
 #include <fcitx/instance.h>
 #include <fcitx/text.h>
 
+#include "ollama_client.h"
 #include "policy.h"
 #include "suggestion.h"
 
@@ -24,6 +36,87 @@ constexpr char kSuggestion[] = " — Tilde is working";
 struct TildeState final : fcitx::InputContextProperty {
     std::string buffer;
     std::string remainingSuggestion;
+    std::uint64_t revision = 0;
+};
+
+struct CompletionJob {
+    fcitx::ICUUID inputContextId;
+    std::uint64_t revision;
+    std::uint64_t requestId;
+    std::string prefix;
+};
+
+class CompletionWorker {
+public:
+    using ResultCallback =
+        std::function<void(const CompletionJob &, tilde::OllamaResult)>;
+
+    CompletionWorker(fcitx::Instance *instance, ResultCallback callback)
+        : instance_(instance), callback_(std::move(callback)),
+          thread_([this] { run(); }) {}
+
+    ~CompletionWorker() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        condition_.notify_one();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+    void request(fcitx::ICUUID inputContextId, std::uint64_t revision,
+                 std::string prefix) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            pending_ = CompletionJob{std::move(inputContextId), revision,
+                                     ++nextRequestId_, std::move(prefix)};
+        }
+        condition_.notify_one();
+    }
+
+private:
+    void run() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        while (!stopping_) {
+            condition_.wait(lock,
+                            [this] { return stopping_ || pending_.has_value(); });
+            if (stopping_) {
+                break;
+            }
+
+            const auto observedRequest = pending_->requestId;
+            if (condition_.wait_for(
+                    lock, std::chrono::milliseconds(120), [this, observedRequest] {
+                        return stopping_ || !pending_.has_value() ||
+                               pending_->requestId != observedRequest;
+                    })) {
+                continue;
+            }
+
+            auto job = std::move(*pending_);
+            pending_.reset();
+            lock.unlock();
+            auto result = client_.complete(job.prefix);
+            instance_->eventDispatcher().schedule(
+                [callback = callback_, job = std::move(job),
+                 result = std::move(result)]() mutable {
+                    callback(job, std::move(result));
+                });
+            lock.lock();
+        }
+    }
+
+    fcitx::Instance *instance_;
+    ResultCallback callback_;
+    tilde::OllamaClient client_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    std::optional<CompletionJob> pending_;
+    std::uint64_t nextRequestId_ = 0;
+    bool stopping_ = false;
+    std::thread thread_;
 };
 
 void clearSuggestion(fcitx::InputContext *inputContext) {
@@ -96,9 +189,36 @@ namespace fcitx {
 
 class TildeEngine final : public InputMethodEngine {
 public:
-    explicit TildeEngine(Instance *instance) {
+    explicit TildeEngine(Instance *instance) : instance_(instance) {
         instance->inputContextManager().registerProperty("tildeState",
                                                          &stateFactory_);
+        const std::weak_ptr<bool> lifetime = lifetime_;
+        completionWorker_ = std::make_unique<CompletionWorker>(
+            instance, [this, lifetime](const CompletionJob &job,
+                                      tilde::OllamaResult result) {
+                if (lifetime.expired() || result.suggestion.empty()) {
+                    return;
+                }
+                auto *inputContext = instance_->inputContextManager().findByUUID(
+                    job.inputContextId);
+                if (!inputContext) {
+                    return;
+                }
+                auto *state = inputContext->propertyFor(&stateFactory_);
+                if (!tilde::suggestionRequestIsCurrent(
+                        state->revision, state->buffer, job.revision,
+                        job.prefix)) {
+                    return;
+                }
+                state->remainingSuggestion = std::move(result.suggestion);
+                showSuggestion(inputContext, state->buffer,
+                               state->remainingSuggestion);
+            });
+    }
+
+    ~TildeEngine() override {
+        lifetime_.reset();
+        completionWorker_.reset();
     }
 
     std::vector<InputMethodEntry> listInputMethods() override {
@@ -118,6 +238,7 @@ public:
         switch (tilde::decide(!state->remainingSuggestion.empty(),
                               classify(event.key()))) {
         case tilde::Effect::AcceptNextWord: {
+            ++state->revision;
             const auto length =
                 tilde::nextWordLength(state->remainingSuggestion);
             state->buffer.append(state->remainingSuggestion, 0, length);
@@ -137,6 +258,7 @@ public:
             return;
         }
         case tilde::Effect::AcceptFullSuggestion:
+            ++state->revision;
             inputContext->commitString(state->buffer +
                                        state->remainingSuggestion);
             state->buffer.clear();
@@ -145,6 +267,7 @@ public:
             event.filterAndAccept();
             return;
         case tilde::Effect::DismissSuggestion:
+            ++state->revision;
             inputContext->commitString(state->buffer);
             state->buffer.clear();
             state->remainingSuggestion.clear();
@@ -152,6 +275,7 @@ public:
             event.filterAndAccept();
             return;
         case tilde::Effect::ClearSuggestion:
+            ++state->revision;
             inputContext->commitString(state->buffer);
             state->buffer.clear();
             state->remainingSuggestion.clear();
@@ -159,9 +283,12 @@ public:
             return;
         case tilde::Effect::ShowSuggestion:
             state->buffer += printableText(event.key());
+            ++state->revision;
             state->remainingSuggestion = kSuggestion;
             showSuggestion(inputContext, state->buffer,
                            state->remainingSuggestion);
+            completionWorker_->request(inputContext->uuid(), state->revision,
+                                       state->buffer);
             event.filterAndAccept();
             return;
         case tilde::Effect::PassThrough:
@@ -171,6 +298,7 @@ public:
 
     void reset(const InputMethodEntry &, InputContextEvent &event) override {
         auto *state = event.inputContext()->propertyFor(&stateFactory_);
+        ++state->revision;
         event.inputContext()->commitString(state->buffer);
         state->buffer.clear();
         state->remainingSuggestion.clear();
@@ -178,8 +306,11 @@ public:
     }
 
 private:
+    Instance *instance_;
     FactoryFor<TildeState> stateFactory_{
         [](InputContext &) { return new TildeState(); }};
+    std::shared_ptr<bool> lifetime_ = std::make_shared<bool>(true);
+    std::unique_ptr<CompletionWorker> completionWorker_;
 };
 
 class TildeFactory final : public AddonFactory {

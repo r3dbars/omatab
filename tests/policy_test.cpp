@@ -60,5 +60,21 @@ int main() {
         ++failures;
     }
 
+    if (tilde::suggestionRequestIsCurrent(7, "current text", 7,
+                                          "current text")) {
+        std::cout << "PASS matching model response is current\n";
+    } else {
+        std::cerr << "FAIL matching model response is current\n";
+        ++failures;
+    }
+
+    if (!tilde::suggestionRequestIsCurrent(8, "newer text", 7,
+                                           "older text")) {
+        std::cout << "PASS stale model response is rejected\n";
+    } else {
+        std::cerr << "FAIL stale model response is rejected\n";
+        ++failures;
+    }
+
     return failures == 0 ? 0 : 1;
 }

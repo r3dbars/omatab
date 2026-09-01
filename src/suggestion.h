@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cctype>
+#include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace tilde {
@@ -40,6 +42,13 @@ inline std::size_t nextWordLength(std::string_view suggestion) {
     }
 
     return cursor == 0 ? suggestion.size() : cursor;
+}
+
+inline bool suggestionRequestIsCurrent(std::uint64_t currentRevision,
+                                       std::string_view currentPrefix,
+                                       std::uint64_t requestRevision,
+                                       std::string_view requestPrefix) {
+    return currentRevision == requestRevision && currentPrefix == requestPrefix;
 }
 
 } // namespace tilde
