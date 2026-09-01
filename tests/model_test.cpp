@@ -72,7 +72,8 @@ int main() {
     std::istringstream residentInput(residentRequest);
     expect(Json::parseFromStream(reader, residentInput,
                                  &parsedResidentRequest, &errors) &&
-               parsedResidentRequest["keep_alive"].asString() == "-1",
+               parsedResidentRequest["keep_alive"].isInt() &&
+               parsedResidentRequest["keep_alive"].asInt() == -1,
            "runtime setting keeps the model resident indefinitely");
     unsetenv("TILDE_KEEP_ALIVE");
 

@@ -44,15 +44,21 @@ double configuredNumber(const char *name, double fallback, double minimum,
                : fallback;
 }
 
-std::string configuredKeepAlive() {
+Json::Value configuredKeepAlive() {
     const auto *value = std::getenv("TILDE_KEEP_ALIVE");
     if (!value || !*value) {
         return "30m";
     }
     const std::string configured(value);
+    if (configured == "-1") {
+        return Json::Value(-1);
+    }
+    if (configured == "0") {
+        return Json::Value(0);
+    }
     return configured.find_first_not_of("-0123456789smh") == std::string::npos
-               ? configured
-               : "30m";
+               ? Json::Value(configured)
+               : Json::Value("30m");
 }
 
 std::size_t appendResponse(char *data, std::size_t size, std::size_t count,
