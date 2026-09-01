@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include <json/json.h>
 
@@ -97,32 +98,111 @@ bool ocrAllowedForWindow(const ActiveWindow &window) {
                         });
 }
 
-std::string OcrContextProvider::context() {
-    activeWindow_ = parseActiveWindow(
+namespace {
+
+ActiveWindow hyprlandActiveWindow() {
+    return parseActiveWindow(
         commandOutput("hyprctl activewindow -j 2>/dev/null"));
+}
+
+std::string captureWindowText(const ActiveWindow &window) {
+    std::ostringstream command;
+    command << "grim -g '" << window.x << ',' << window.y << ' '
+            << window.width << 'x' << window.height
+            << "' - | tesseract stdin stdout --oem 1 --psm 6 -l eng "
+               "--dpi 180 -c preserve_interword_spaces=1 2>/dev/null";
+    return normalizeOcr(commandOutput(command.str()));
+}
+
+} // namespace
+
+OcrContextProvider::OcrContextProvider()
+    : OcrContextProvider(hyprlandActiveWindow, captureWindowText,
+                         kOcrCacheDuration) {}
+
+OcrContextProvider::OcrContextProvider(WindowSource windowSource,
+                                       Capture capture,
+                                       std::chrono::milliseconds cacheDuration)
+    : windowSource_(std::move(windowSource)), capture_(std::move(capture)),
+      cacheDuration_(cacheDuration), thread_([this] { run(); }) {}
+
+OcrContextProvider::~OcrContextProvider() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopping_ = true;
+    }
+    condition_.notify_all();
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+}
+
+OcrSnapshot OcrContextProvider::snapshot() {
+    activeWindow_ = windowSource_();
     if (!ocrAllowedForWindow(activeWindow_)) {
         return {};
     }
 
     const auto now = std::chrono::steady_clock::now();
-    if (activeWindow_.address == cachedAddress_ && !cachedText_.empty() &&
-        now - capturedAt_ < kOcrCacheDuration) {
-        return cachedText_;
+    std::lock_guard<std::mutex> lock(mutex_);
+    OcrSnapshot result;
+    const bool sameWindow = activeWindow_.address == cachedAddress_;
+    if (sameWindow && !cachedText_.empty()) {
+        result.text = cachedText_;
+        result.ageMs = std::chrono::duration<double, std::milli>(
+                           now - capturedAt_)
+                           .count();
     }
 
-    std::ostringstream command;
-    command << "grim -g '" << activeWindow_.x << ',' << activeWindow_.y << ' '
-            << activeWindow_.width << 'x' << activeWindow_.height
-            << "' - | tesseract stdin stdout --oem 1 --psm 6 -l eng "
-               "--dpi 180 -c preserve_interword_spaces=1 2>/dev/null";
-    cachedText_ = normalizeOcr(commandOutput(command.str()));
-    cachedAddress_ = activeWindow_.address;
-    capturedAt_ = now;
-    return cachedText_;
+    const bool fresh = sameWindow && capturedAt_ != decltype(capturedAt_){} &&
+                       now - capturedAt_ < cacheDuration_;
+    if (!fresh) {
+        // Coalesce: only the newest geometry matters if several requests
+        // arrive while a capture is running.
+        pendingWindow_ = activeWindow_;
+        condition_.notify_all();
+    }
+    result.refreshing = refreshing_ || pendingWindow_.has_value();
+    return result;
 }
+
+std::string OcrContextProvider::context() { return snapshot().text; }
 
 const ActiveWindow &OcrContextProvider::activeWindow() const {
     return activeWindow_;
+}
+
+bool OcrContextProvider::waitForRefresh(std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return condition_.wait_for(lock, timeout, [this] {
+        return stopping_ || (!refreshing_ && !pendingWindow_.has_value());
+    });
+}
+
+void OcrContextProvider::run() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    while (!stopping_) {
+        condition_.wait(lock, [this] {
+            return stopping_ || pendingWindow_.has_value();
+        });
+        if (stopping_) {
+            break;
+        }
+        const auto window = std::move(*pendingWindow_);
+        pendingWindow_.reset();
+        refreshing_ = true;
+        lock.unlock();
+
+        auto text = capture_(window);
+        const auto capturedAt = std::chrono::steady_clock::now();
+
+        lock.lock();
+        refreshing_ = false;
+        cachedAddress_ = window.address;
+        cachedText_ = std::move(text);
+        capturedAt_ = capturedAt;
+        condition_.notify_all();
+    }
 }
 
 } // namespace tilde

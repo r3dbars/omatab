@@ -1,9 +1,15 @@
+#include <arpa/inet.h>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <netinet/in.h>
 #include <sstream>
 #include <string>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 
 #include <json/json.h>
@@ -25,6 +31,46 @@ void expect(bool condition, const char *name) {
     std::cerr << "FAIL " << name << '\n';
     ++failures;
 }
+
+// Listens on an ephemeral loopback port and never answers, so a client
+// request stays in flight until it is cancelled or times out.
+struct SilentServer {
+    int descriptor = -1;
+    unsigned short port = 0;
+
+    SilentServer() {
+        descriptor = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (descriptor < 0) {
+            return;
+        }
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        if (::bind(descriptor, reinterpret_cast<sockaddr *>(&address),
+                   sizeof(address)) != 0 ||
+            ::listen(descriptor, 4) != 0) {
+            ::close(descriptor);
+            descriptor = -1;
+            return;
+        }
+        socklen_t length = sizeof(address);
+        if (::getsockname(descriptor, reinterpret_cast<sockaddr *>(&address),
+                          &length) == 0) {
+            port = ntohs(address.sin_port);
+        }
+    }
+
+    ~SilentServer() {
+        if (descriptor >= 0) {
+            ::close(descriptor);
+        }
+    }
+
+    std::string endpoint() const {
+        return "http://127.0.0.1:" + std::to_string(port) + "/api/generate";
+    }
+};
 
 } // namespace
 
@@ -202,8 +248,119 @@ int main() {
     unlink(telemetryPath.c_str());
     unsetenv("TILDE_LOG_PATH");
 
+    {
+        tilde::OllamaClient client("http://127.0.0.1:9/api/generate",
+                                   "test-model");
+        const auto skipped = client.complete("text", {}, [] { return true; });
+        expect(skipped.cancelled && skipped.suggestion.empty(),
+               "already-superseded request is skipped before sending");
+        expect(skipped.statusCode == 0 && skipped.responseJson.empty(),
+               "skipped request never reaches the network");
+    }
+
+    {
+        SilentServer server;
+        expect(server.port != 0, "silent test server is listening");
+        setenv("TILDE_TIMEOUT_MS", "5000", 1);
+        tilde::OllamaClient client(server.endpoint(), "test-model");
+        std::atomic<bool> superseded{false};
+        std::thread canceller([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            superseded.store(true);
+            client.interrupt();
+        });
+        const auto started = std::chrono::steady_clock::now();
+        const auto result = client.complete(
+            "text", {}, [&superseded] { return superseded.load(); });
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started)
+                .count();
+        canceller.join();
+        unsetenv("TILDE_TIMEOUT_MS");
+        expect(result.cancelled, "in-flight request reports cancellation");
+        expect(result.suggestion.empty() && result.error == "cancelled",
+               "cancelled request yields no suggestion");
+        expect(elapsed >= 50 && elapsed < 1000,
+               "cancellation returns promptly instead of waiting for timeout");
+        std::cout << "INFO cancellation latency ms=" << elapsed << '\n';
+
+        // The client must remain usable for the next request.
+        std::atomic<bool> secondSuperseded{false};
+        std::thread secondCanceller([&] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            secondSuperseded.store(true);
+            client.interrupt();
+        });
+        const auto second = client.complete(
+            "more", {}, [&secondSuperseded] { return secondSuperseded.load(); });
+        secondCanceller.join();
+        expect(second.cancelled, "client accepts a new request after cancel");
+    }
+
+    {
+        std::atomic<int> captures{0};
+        tilde::ActiveWindow fakeWindow;
+        fakeWindow.address = "0x1";
+        fakeWindow.windowClass = "editor";
+        fakeWindow.width = 800;
+        fakeWindow.height = 600;
+        fakeWindow.valid = true;
+        tilde::OcrContextProvider provider(
+            [&fakeWindow] { return fakeWindow; },
+            [&captures](const tilde::ActiveWindow &window) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(80));
+                ++captures;
+                return "seen in " + window.windowClass;
+            },
+            std::chrono::milliseconds(150));
+
+        const auto started = std::chrono::steady_clock::now();
+        const auto first = provider.snapshot();
+        const auto firstMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started)
+                .count();
+        expect(first.text.empty() && first.ageMs < 0 && first.refreshing,
+               "first OCR snapshot returns empty without waiting");
+        expect(firstMs < 40, "OCR snapshot does not block on capture");
+
+        expect(provider.waitForRefresh(std::chrono::seconds(2)),
+               "background OCR capture finishes");
+        const auto second = provider.snapshot();
+        expect(second.text == "seen in editor" && second.ageMs >= 0 &&
+                   !second.refreshing,
+               "later snapshot serves the captured text from cache");
+        expect(captures.load() == 1, "fresh cache does not recapture");
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const auto stale = provider.snapshot();
+        expect(stale.text == "seen in editor" && stale.refreshing,
+               "expired cache still serves old text while refreshing");
+        provider.snapshot();
+        expect(provider.waitForRefresh(std::chrono::seconds(2)) &&
+                   captures.load() == 2,
+               "overlapping refresh requests coalesce into one capture");
+
+        fakeWindow.address = "0x2";
+        fakeWindow.windowClass = "1Password";
+        const auto blocked = provider.snapshot();
+        expect(blocked.text.empty() && !blocked.refreshing,
+               "blocked window gets neither cached text nor a capture");
+
+        fakeWindow.windowClass = "browser";
+        const auto switched = provider.snapshot();
+        expect(switched.text.empty() && switched.refreshing,
+               "new window never receives another window's cached text");
+        provider.waitForRefresh(std::chrono::seconds(2));
+        expect(provider.snapshot().text == "seen in browser",
+               "new window is captured in the background");
+    }
+
     if (std::getenv("TILDE_LIVE_OCR_TEST")) {
         tilde::OcrContextProvider provider;
+        provider.snapshot();
+        provider.waitForRefresh(std::chrono::seconds(10));
         const auto liveText = provider.context();
         expect(!liveText.empty(), "live active-window OCR returns text");
         std::cout << "INFO live OCR bytes=" << liveText.size() << '\n';

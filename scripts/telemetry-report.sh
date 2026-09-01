@@ -30,6 +30,7 @@ jq -s '
     shown_count: ($shown | length),
     empty_count: (model_results | map(select(.outcome == "empty")) | length),
     stale_count: (model_results | map(select(.outcome == "stale")) | length),
+    cancelled_count: (model_results | map(select(.outcome == "cancelled")) | length),
     error_count: (model_results | map(select(.outcome == "request_error")) | length),
     accepted_request_count: ($accepted | length),
     acceptance_rate: (if ($shown | length) == 0 then null

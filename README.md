@@ -13,8 +13,10 @@ dismisses it.
 - Client-side preedit where the application supports it
 - Debounced, asynchronous local inference through Ollama
 - Cursor-aware surrounding-text context with bounded UTF-8 prefix and suffix
-- Throttled, in-memory OCR of the active window for visible app context
+- Throttled, in-memory OCR of the active window for visible app context,
+  captured on a background thread so it never delays a suggestion
 - Stale-response rejection by input-context UUID and revision
+- In-flight request cancellation as soon as a newer keystroke supersedes it
 - No placeholder suggestion while inference is pending or unavailable
 - User-local installation under `~/.local`
 
@@ -26,7 +28,10 @@ instead of replying to it. Requests begin after a 120 ms
 typing pause, generate at most 16 tokens, and keep models loaded for 30 minutes.
 Each word accepted with `Tab` includes one trailing space; the final word also
 adds a trailing space. Pending, failed, timed-out, and empty model requests show
-no suggestion, leaving native `Tab` behavior intact.
+no suggestion, leaving native `Tab` behavior intact. A request still running when
+the next keystroke arrives is aborted immediately; Ollama stops generating when
+the connection closes, so the GPU moves straight to the newest text instead
+of finishing work that would be rejected as stale.
 
 Set `TILDE_MODEL` and `TILDE_CONTEXT_MODEL` in the Fcitx5 service environment
 to test alternate completion and OCR-context models without rebuilding. Both
@@ -55,7 +60,7 @@ Set `TILDE_LOG_PATH` to enable a local JSONL flight recorder. Each record is
 written with mode `0600`; the parent directory should be mode `0700`. Logs
 include full textbox/OCR context, exact model requests and responses, latency,
 errors, and suggestion outcomes including word/full acceptance, dismissal,
-typed-over, stale, cleared, and reset states. Sensitive input contexts and
+typed-over, stale, cancelled, cleared, and reset states. Sensitive input contexts and
 blocked password-manager windows remain excluded by Tilde's existing safety
 gate. The log rotates to `.1` at 50 MiB by default; override the byte limit with
 `TILDE_LOG_MAX_BYTES` (1 MiB to 1 GiB).
@@ -129,6 +134,10 @@ application matrix.
   1 KiB after it. Other apps use recent Tilde-tracked text as a fallback.
 - Active-window OCR is cached for two seconds and capped at 4 KiB. It sees only
   rendered content, not hidden/scrolled-off document content or browser DOM.
+  Capture takes about a second, so it runs off the request path: each
+  request uses the latest capture for the current window and schedules a
+  refresh when that capture is stale. The first request in a newly focused
+  window has no OCR context. Telemetry records `ocr_age_ms` per request.
 - Password/sensitive input contexts and known password-manager windows never
   trigger predictions or OCR.
 

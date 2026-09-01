@@ -1,6 +1,7 @@
 #include "ollama_client.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cerrno>
 #include <cctype>
 #include <cstdlib>
@@ -13,6 +14,9 @@
 namespace {
 
 constexpr std::size_t kMaximumSuggestionBytes = 160;
+// Fallback wake interval when no interrupt() arrives; keeps a lost wakeup
+// from stalling cancellation for long.
+constexpr int kPollTimeoutMs = 100;
 
 long configuredInteger(const char *name, long fallback, long minimum,
                        long maximum) {
@@ -220,64 +224,62 @@ OllamaClient::OllamaClient(std::string endpoint, std::string model)
         contextModel_ = configuredContextModel;
     }
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    multi_ = curl_multi_init();
+}
+
+OllamaClient::~OllamaClient() {
+    if (multi_) {
+        curl_multi_cleanup(multi_);
+    }
+}
+
+void OllamaClient::interrupt() {
+    if (multi_) {
+        curl_multi_wakeup(multi_);
+    }
 }
 
 OllamaResult OllamaClient::complete(std::string_view prefix,
-                                    std::string_view suffix) const {
-    OllamaResult result;
-    result.model = model_;
-    auto *curl = curl_easy_init();
-    if (!curl) {
-        result.error = "curl initialization failed";
-        return result;
-    }
-
-    std::string responseBody;
-    const auto requestBody = buildOllamaRequest(model_, prefix, suffix);
-    result.requestJson = requestBody;
-    curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    curl_easy_setopt(curl, CURLOPT_URL, endpoint_.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBody.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
-                     static_cast<long>(requestBody.size()));
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 150L);
-    curl_easy_setopt(
-        curl, CURLOPT_TIMEOUT_MS,
-        configuredInteger("TILDE_TIMEOUT_MS", 2500, 250, 10000));
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendResponse);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
-
-    const auto status = curl_easy_perform(curl);
-    double totalSeconds = 0.0;
-    curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &totalSeconds);
-    result.latencyMs = totalSeconds * 1000.0;
-    result.responseJson = responseBody;
-    if (status == CURLE_OK) {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.statusCode);
-        if (result.statusCode == 200) {
-            result.suggestion = parseOllamaSuggestion(responseBody);
-        } else {
-            result.error = "Ollama returned HTTP " +
-                           std::to_string(result.statusCode);
-        }
-    } else {
-        result.error = curl_easy_strerror(status);
-    }
-
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    return result;
+                                    std::string_view suffix,
+                                    const CancelPredicate &cancelled) {
+    return perform(endpoint_, model_,
+                   buildOllamaRequest(model_, prefix, suffix), cancelled);
 }
 
 OllamaResult OllamaClient::completeWithContext(
     std::string_view prefix, std::string_view suffix,
-    std::string_view visibleContext) const {
+    std::string_view visibleContext, const CancelPredicate &cancelled) {
+    auto result = perform(
+        contextEndpoint_, contextModel_,
+        buildOllamaContextRequest(contextModel_, prefix, suffix,
+                                  visibleContext),
+        cancelled);
+    if (!result.suggestion.empty() && !configuredFim()) {
+        result.suggestion =
+            ensureInsertionBoundary(prefix, std::move(result.suggestion));
+    }
+    return result;
+}
+
+OllamaResult OllamaClient::perform(const std::string &endpoint,
+                                   const std::string &model,
+                                   std::string requestBody,
+                                   const CancelPredicate &cancelled) {
     OllamaResult result;
-    result.model = contextModel_;
+    result.model = model;
+    result.requestJson = std::move(requestBody);
+
+    const auto isCancelled = [&cancelled] { return cancelled && cancelled(); };
+    if (isCancelled()) {
+        result.cancelled = true;
+        result.error = "cancelled before request";
+        return result;
+    }
+    if (!multi_) {
+        result.error = "curl multi initialization failed";
+        return result;
+    }
+
     auto *curl = curl_easy_init();
     if (!curl) {
         result.error = "curl initialization failed";
@@ -285,16 +287,14 @@ OllamaResult OllamaClient::completeWithContext(
     }
 
     std::string responseBody;
-    const auto requestBody = buildOllamaContextRequest(
-        contextModel_, prefix, suffix, visibleContext);
-    result.requestJson = requestBody;
     curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_URL, contextEndpoint_.c_str());
+
+    curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBody.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, result.requestJson.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
-                     static_cast<long>(requestBody.size()));
+                     static_cast<long>(result.requestJson.size()));
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 150L);
     curl_easy_setopt(
         curl, CURLOPT_TIMEOUT_MS,
@@ -303,25 +303,72 @@ OllamaResult OllamaClient::completeWithContext(
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendResponse);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
 
-    const auto status = curl_easy_perform(curl);
-    double totalSeconds = 0.0;
-    curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &totalSeconds);
-    result.latencyMs = totalSeconds * 1000.0;
+    const auto started = std::chrono::steady_clock::now();
+    curl_multi_add_handle(multi_, curl);
+
+    // Drive the transfer manually so a superseded request can be dropped
+    // between steps. interrupt() wakes the poll early; the bounded timeout
+    // is only a fallback.
+    bool aborted = false;
+    CURLMcode multiStatus = CURLM_OK;
+    int running = 1;
+    while (running) {
+        multiStatus = curl_multi_perform(multi_, &running);
+        if (multiStatus != CURLM_OK || !running) {
+            break;
+        }
+        if (isCancelled()) {
+            aborted = true;
+            break;
+        }
+        multiStatus = curl_multi_poll(multi_, nullptr, 0, kPollTimeoutMs,
+                                      nullptr);
+        if (multiStatus != CURLM_OK) {
+            break;
+        }
+        if (isCancelled()) {
+            aborted = true;
+            break;
+        }
+    }
+
+    CURLcode status = CURLE_OK;
+    bool completed = false;
+    if (!aborted && multiStatus == CURLM_OK) {
+        int remaining = 0;
+        while (auto *message = curl_multi_info_read(multi_, &remaining)) {
+            if (message->msg == CURLMSG_DONE &&
+                message->easy_handle == curl) {
+                status = message->data.result;
+                completed = true;
+            }
+        }
+    }
+    curl_multi_remove_handle(multi_, curl);
+
+    result.latencyMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started)
+            .count();
     result.responseJson = responseBody;
-    if (status == CURLE_OK) {
+
+    if (aborted) {
+        result.cancelled = true;
+        result.error = "cancelled";
+    } else if (multiStatus != CURLM_OK) {
+        result.error = curl_multi_strerror(multiStatus);
+    } else if (!completed) {
+        result.error = "transfer ended without completion status";
+    } else if (status != CURLE_OK) {
+        result.error = curl_easy_strerror(status);
+    } else {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.statusCode);
         if (result.statusCode == 200) {
             result.suggestion = parseOllamaSuggestion(responseBody);
-            if (!configuredFim()) {
-                result.suggestion = ensureInsertionBoundary(
-                    prefix, std::move(result.suggestion));
-            }
         } else {
             result.error = "Ollama returned HTTP " +
                            std::to_string(result.statusCode);
         }
-    } else {
-        result.error = curl_easy_strerror(status);
     }
 
     curl_slist_free_all(headers);

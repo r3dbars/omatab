@@ -95,6 +95,8 @@ struct CompletionJob {
     std::string visibleContext;
     std::string windowClass;
     std::string windowTitle;
+    double ocrAgeMs = -1.0;
+    bool ocrRefreshing = false;
 };
 
 class CompletionWorker {
@@ -111,7 +113,9 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             stopping_ = true;
         }
+        shutdown_.store(true);
         condition_.notify_one();
+        client_.interrupt();
         if (thread_.joinable()) {
             thread_.join();
         }
@@ -126,6 +130,9 @@ public:
                                      std::move(suffix), {}, {}, {}};
         }
         condition_.notify_one();
+        // Any transfer still running belongs to an older keystroke; drop it
+        // so the GPU moves on to this one instead of finishing stale work.
+        client_.interrupt();
     }
 
 private:
@@ -150,15 +157,26 @@ private:
             auto job = std::move(*pending_);
             pending_.reset();
             lock.unlock();
-            const auto visibleContext = ocrContext_.context();
+            const auto requestId = job.requestId;
+            const auto superseded = [this, requestId] {
+                return shutdown_.load() ||
+                       nextRequestId_.load() != requestId;
+            };
+            // Answers from cache immediately; a slow capture refreshes in
+            // the background for later requests.
+            auto ocr = ocrContext_.snapshot();
             const auto &activeWindow = ocrContext_.activeWindow();
-            job.visibleContext = visibleContext;
+            job.visibleContext = std::move(ocr.text);
+            job.ocrAgeMs = ocr.ageMs;
+            job.ocrRefreshing = ocr.refreshing;
             job.windowClass = activeWindow.windowClass;
             job.windowTitle = activeWindow.title;
-            auto result = visibleContext.empty()
-                              ? client_.complete(job.prefix, job.suffix)
-                              : client_.completeWithContext(
-                                    job.prefix, job.suffix, visibleContext);
+            auto result =
+                job.visibleContext.empty()
+                    ? client_.complete(job.prefix, job.suffix, superseded)
+                    : client_.completeWithContext(job.prefix, job.suffix,
+                                                  job.visibleContext,
+                                                  superseded);
             instance_->eventDispatcher().schedule(
                 [callback = callback_, job = std::move(job),
                  result = std::move(result)]() mutable {
@@ -175,7 +193,9 @@ private:
     std::mutex mutex_;
     std::condition_variable condition_;
     std::optional<CompletionJob> pending_;
-    std::uint64_t nextRequestId_ = 0;
+    // Written under mutex_, read lock-free by the cancel predicate.
+    std::atomic<std::uint64_t> nextRequestId_{0};
+    std::atomic<bool> shutdown_{false};
     bool stopping_ = false;
     std::thread thread_;
 };
@@ -284,6 +304,8 @@ public:
                 modelEvent["textbox_prefix"] = job.prefix;
                 modelEvent["textbox_suffix"] = job.suffix;
                 modelEvent["ocr_context"] = job.visibleContext;
+                modelEvent["ocr_age_ms"] = job.ocrAgeMs;
+                modelEvent["ocr_refreshing"] = job.ocrRefreshing;
                 modelEvent["window_class"] = job.windowClass;
                 modelEvent["window_title"] = job.windowTitle;
                 modelEvent["model"] = result.model;
@@ -294,6 +316,11 @@ public:
                 modelEvent["http_status"] =
                     static_cast<Json::Int64>(result.statusCode);
                 modelEvent["latency_ms"] = result.latencyMs;
+                if (result.cancelled) {
+                    modelEvent["outcome"] = "cancelled";
+                    telemetry_.record(std::move(modelEvent));
+                    return;
+                }
                 auto *inputContext = instance_->inputContextManager().findByUUID(
                     job.inputContextId);
                 if (!inputContext) {
