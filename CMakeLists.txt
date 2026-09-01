@@ -42,6 +42,17 @@ install(
     DESTINATION bin
     RENAME tilde-telemetry-report
 )
+install(
+    PROGRAMS scripts/warm-model.sh
+    DESTINATION libexec
+    RENAME tilde-warm-model
+)
+install(
+    FILES
+        packaging/systemd/tilde-model-warm.service
+        packaging/systemd/tilde-model-warm.timer
+    DESTINATION share/systemd/user
+)
 
 if(BUILD_TESTING)
     add_executable(tilde-policy-test tests/policy_test.cpp)

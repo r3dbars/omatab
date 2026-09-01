@@ -52,6 +52,8 @@ int main() {
            "request caps output tokens");
     expect(parsedRequest["options"]["num_ctx"].asInt() == 8192,
            "request uses the tested context window");
+    expect(parsedRequest["keep_alive"].asString() == "30m",
+           "request uses the default model lease");
 
     setenv("TILDE_NUM_PREDICT", "12", 1);
     const auto tunedRequest = tilde::buildOllamaRequest("test-model", "text");
@@ -62,6 +64,17 @@ int main() {
                parsedTunedRequest["options"]["num_predict"].asInt() == 12,
            "runtime tuning overrides request parameters");
     unsetenv("TILDE_NUM_PREDICT");
+
+    setenv("TILDE_KEEP_ALIVE", "-1", 1);
+    const auto residentRequest =
+        tilde::buildOllamaRequest("test-model", "text");
+    Json::Value parsedResidentRequest;
+    std::istringstream residentInput(residentRequest);
+    expect(Json::parseFromStream(reader, residentInput,
+                                 &parsedResidentRequest, &errors) &&
+               parsedResidentRequest["keep_alive"].asString() == "-1",
+           "runtime setting keeps the model resident indefinitely");
+    unsetenv("TILDE_KEEP_ALIVE");
 
     const auto contextRequest = tilde::buildOllamaContextRequest(
         "context-model", "before caret", "after caret", "visible label");

@@ -44,6 +44,17 @@ double configuredNumber(const char *name, double fallback, double minimum,
                : fallback;
 }
 
+std::string configuredKeepAlive() {
+    const auto *value = std::getenv("TILDE_KEEP_ALIVE");
+    if (!value || !*value) {
+        return "30m";
+    }
+    const std::string configured(value);
+    return configured.find_first_not_of("-0123456789smh") == std::string::npos
+               ? configured
+               : "30m";
+}
+
 std::size_t appendResponse(char *data, std::size_t size, std::size_t count,
                            void *destination) {
     const auto bytes = size * count;
@@ -66,7 +77,7 @@ std::string buildOllamaRequest(std::string_view model,
         request["suffix"] = std::string(suffix);
     }
     request["stream"] = false;
-    request["keep_alive"] = "30m";
+    request["keep_alive"] = configuredKeepAlive();
     request["options"]["num_predict"] = static_cast<Json::Int64>(
         configuredInteger("TILDE_NUM_PREDICT", 16, 1, 64));
     request["options"]["num_ctx"] = static_cast<Json::Int64>(
@@ -98,7 +109,7 @@ std::string buildOllamaContextRequest(std::string_view model,
     }
     request["raw"] = true;
     request["stream"] = false;
-    request["keep_alive"] = "30m";
+    request["keep_alive"] = configuredKeepAlive();
     request["options"]["num_predict"] = static_cast<Json::Int64>(
         configuredInteger("TILDE_NUM_PREDICT", 16, 1, 64));
     request["options"]["num_ctx"] = static_cast<Json::Int64>(

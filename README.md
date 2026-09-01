@@ -36,6 +36,14 @@ paths use an 8K context window. The main tuning controls are
 are `TILDE_NUM_CTX` (`8192`) and `TILDE_TIMEOUT_MS` (`2500`). Invalid or
 out-of-range values safely fall back to these defaults.
 
+Set `TILDE_KEEP_ALIVE=-1` to keep a model resident indefinitely. The optional
+`tilde-model-warm.timer` preloads the configured model and refreshes that lease
+every minute, including after Ollama restarts. Enable it with:
+
+```bash
+systemctl --user enable --now tilde-model-warm.timer
+```
+
 ## Private telemetry
 
 Set `TILDE_LOG_PATH` to enable a local JSONL flight recorder. Each record is

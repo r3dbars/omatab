@@ -1,0 +1,7 @@
+[Unit]
+Description=Keep Tilde's local model warm in Ollama
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/libexec/tilde-warm-model

@@ -8,7 +8,7 @@ override_target="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/omarchy-fcitx5.s
 "$project_dir/scripts/install-user.sh"
 install -Dm644 "$override_source" "$override_target"
 systemctl --user daemon-reload
+systemctl --user enable --now tilde-model-warm.timer
 systemctl --user restart omarchy-fcitx5.service
 
 echo "Restarted Omarchy's Fcitx5 service with the user-local addon path."
-
