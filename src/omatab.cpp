@@ -41,13 +41,18 @@
 
 namespace omatab {
 
+// Accept keys may be plain keys such as grave; Fcitx rejects modifier-less
+// keys unless told otherwise.
+const fcitx::KeyConstrainFlags kAcceptKeyFlags{
+    fcitx::KeyConstrainFlag::AllowModifierLess};
+
 // User settings. Stored at ~/.config/fcitx5/conf/omatab.conf and editable
 // with `omatab` or fcitx5-configtool; changes apply live.
 FCITX_CONFIGURATION(
     OmatabConfig,
     fcitx::KeyListOption fullAcceptKey{
         this, "FullAcceptKey", "Accept the whole suggestion",
-        {fcitx::Key("Shift+Tab")}, fcitx::KeyListConstrain()};
+        {fcitx::Key("Shift+Tab")}, fcitx::KeyListConstrain(kAcceptKeyFlags)};
     fcitx::Option<bool> screenContext{
         this, "ScreenContext",
         "Read text on the active window (OCR) for extra context", false};

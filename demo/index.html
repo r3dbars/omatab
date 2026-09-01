@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oma Tab Scenarios</title>
+<style>
+  /* Light only, on purpose: Oma Tab's screen context reads this window with
+     OCR, and dark text on white is what tesseract reads best. */
+  :root {
+    color-scheme: light;
+    --bg: #eef0f3; --panel: #ffffff; --ink: #15171a; --muted: #5f6672; --line: #d9dde3;
+    --accent: #5b4bd6; --accent-ink: #fff; --ok: #1f8f57; --warn: #b8741f; --bad: #c43d2f;
+    --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Menlo, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--sans); display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 12px 22px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0 8px 0 0; }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  nav button { font: 14px var(--sans); border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 5px 13px; cursor: pointer; }
+  nav button[aria-current="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12.5px; color: var(--muted); background: var(--bg); }
+  .pill b { color: var(--ink); font-weight: 600; } .pill.on b { color: var(--ok); }
+  .actions { display: flex; gap: 6px; }
+  .actions button, .drawer-toggle { font: 13px var(--sans); border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+  .actions button:hover, .drawer-toggle:hover { border-color: var(--accent); }
+  .banner { margin: 14px 22px 0; background: #fff6e5; border: 1px solid #f0d9a8; border-radius: 10px; padding: 9px 14px; font-size: 14px; }
+  .banner.bad { background: #fdecea; border-color: #f2b8b1; }
+  .stage { flex: 1; display: flex; justify-content: center; padding: 18px 22px 30px; }
+  .scene { width: min(860px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 10px 30px rgba(20, 24, 40, .06); display: flex; flex-direction: column; }
+  .scene-head { padding: 12px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; }
+  .scene-head h2 { font-size: 17px; margin: 0; } .scene-head .sub { color: var(--muted); font-size: 13.5px; }
+  .scene-body { padding: 18px 20px; }
+  .scene-foot { padding: 14px 20px 18px; border-top: 1px solid var(--line); background: #fafbfc; }
+  .field { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); font: 16.5px/1.55 var(--sans); padding: 11px 14px; outline: none; }
+  .field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91, 75, 214, .12); }
+  textarea.field { min-height: 96px; resize: vertical; } .field.mono { font-family: var(--mono); font-size: 15px; }
+  .rich:empty::before { content: attr(data-placeholder); color: var(--muted); }
+  .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  .hint kbd { font: 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 6px; background: #fff; }
+
+  /* Slack */
+  .slack .msg { display: grid; grid-template-columns: 40px 1fr; gap: 12px; padding: 8px 0; }
+  .avatar { width: 38px; height: 38px; border-radius: 8px; display: grid; place-items: center; font-weight: 700; color: #fff; font-size: 15px; }
+  .slack .who { font-weight: 700; } .slack .when { color: var(--muted); font-size: 12.5px; margin-left: 8px; }
+  .slack .text { margin-top: 2px; } .slack code { font: 14px var(--mono); background: #f3f0ff; border: 1px solid #e2dcff; border-radius: 4px; padding: 0 4px; }
+  .slack .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; margin: 6px 0; } .slack .divider::before, .slack .divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+
+  /* iMessage */
+  .imsg .thread { display: flex; flex-direction: column; gap: 6px; max-width: 560px; margin: 0 auto; }
+  .bubble { max-width: 78%; padding: 9px 14px; border-radius: 18px; font-size: 16.5px; line-height: 1.35; }
+  .bubble.them { background: #e9e9eb; color: #111; align-self: flex-start; border-bottom-left-radius: 6px; }
+  .bubble.me { background: #1b8cff; color: #fff; align-self: flex-end; border-bottom-right-radius: 6px; }
+  .imsg .stamp { text-align: center; color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
+  .imsg .field { border-radius: 999px; }
+
+  /* Diff */
+  .diff { font: 14px/1.5 var(--mono); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .diff .file { background: #f6f8fa; border-bottom: 1px solid var(--line); padding: 7px 12px; font-weight: 600; }
+  .diff .hunk { background: #f1f8ff; color: #57606a; padding: 2px 12px; }
+  .diff .l { display: grid; grid-template-columns: 34px 1fr; }
+  .diff .l span:first-child { color: #8b949e; text-align: right; padding-right: 10px; user-select: none; }
+  .diff .l pre { margin: 0; padding: 0 12px; white-space: pre; }
+  .diff .add { background: #e6ffec; } .diff .add pre::before { content: "+ "; color: #1a7f37; }
+  .diff .del { background: #ffebe9; } .diff .del pre::before { content: "- "; color: #cf222e; }
+  .diff .ctx pre::before { content: "  "; }
+  .pr .title { font-size: 20px; font-weight: 600; margin: 0 0 4px; } .pr .title .num { color: var(--muted); font-weight: 400; }
+  .pr .meta { color: var(--muted); font-size: 14px; margin-bottom: 14px; } .pr .badge { background: #8250df; color: #fff; border-radius: 999px; padding: 1px 9px; font-size: 12.5px; font-weight: 600; margin-right: 6px; }
+  .pr .desc { margin: 0 0 14px; }
+  .term { background: #0f1218; color: #d7dbe3; font: 14px/1.5 var(--mono); border-radius: 8px; padding: 14px 16px; white-space: pre; overflow-x: auto; }
+  .term .p { color: #7ee787; } .term .a { color: #7ee787; } .term .d { color: #ff7b72; } .term .h { color: #79c0ff; } .term .m { color: #8b949e; }
+  .commit .field { min-height: 120px; }
+
+  /* Email */
+  .mail .subject { font-size: 21px; font-weight: 600; margin: 0 0 10px; }
+  .mail .from { display: grid; grid-template-columns: 40px 1fr; gap: 12px; margin-bottom: 10px; }
+  .mail .from .name { font-weight: 600; } .mail .from .addr { color: var(--muted); font-size: 13.5px; }
+  .mail .body p { margin: 0 0 12px; }
+
+  /* Drawer with Oma Tab internals */
+  .drawer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 22px 16px; }
+  .drawer h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; }
+  .drawer-grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { background: var(--bg); border-radius: 8px; padding: 7px 10px; } .stat .n { font: 600 20px/1.1 var(--sans); } .stat .l { color: var(--muted); font-size: 12px; }
+  .preedit { margin-top: 10px; font: 14px var(--mono); padding: 6px 10px; border-radius: 6px; background: var(--bg); border: 1px dashed var(--line); min-height: 30px; } .preedit b { color: var(--accent); }
+  .feed { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; font-size: 13px; }
+  .feed li { padding: 5px 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 76px 1fr; gap: 8px; } .feed li:first-child { border-top: 0; }
+  .tag { font: 600 10.5px/1 var(--mono); text-transform: uppercase; letter-spacing: .04em; padding: 4px 5px; border-radius: 4px; background: var(--bg); color: var(--muted); text-align: center; align-self: start; }
+  .tag.shown { color: var(--ok); } .tag.accept_word, .tag.accept_full { color: var(--accent); } .tag.typed_over, .tag.dismiss { color: var(--warn); } .tag.request_error { color: var(--bad); }
+  .feed .txt { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; } .feed .ctx { color: var(--muted); } .feed .sug { color: var(--ok); } .feed .meta { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .muted { color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Oma Tab</h1>
+  <nav id="nav"></nav>
+  <div class="pills" id="pills"><span class="pill">connecting…</span></div>
+  <div class="actions">
+    <button id="btnToggle">…</button>
+    <button id="btnOcr">…</button>
+    <button id="btnTelemetry">…</button>
+    <button class="drawer-toggle" id="btnDrawer">Show Oma Tab's view</button>
+  </div>
+</header>
+<div id="banner" class="banner" hidden></div>
+<div class="stage"><div class="scene" id="scene"></div></div>
+<div class="drawer" id="drawer" hidden>
+  <div class="drawer-grid">
+    <div>
+      <h3>This session</h3>
+      <div class="stats">
+        <div class="stat"><div class="n" id="sShown">0</div><div class="l">shown</div></div>
+        <div class="stat"><div class="n" id="sAccepted">0</div><div class="l">accepted</div></div>
+        <div class="stat"><div class="n" id="sLatency">–</div><div class="l">median ms</div></div>
+      </div>
+      <div class="preedit" id="preedit"><span class="muted">Suggestion the browser sees appears here.</span></div>
+      <p class="hint">Opening this drawer puts these words on screen too, so with OCR on the model can read them. Close it for a clean demo.</p>
+    </div>
+    <div>
+      <h3>What Oma Tab saw</h3>
+      <ul class="feed" id="feed"><li class="muted" id="feedEmpty">Waiting for events… (needs telemetry on)</li></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const av = (initials, color) => `<div class="avatar" style="background:${color}">${initials}</div>`;
+  const diffLines = (lines) => lines.map(([kind, n, text]) => `<div class="l ${kind}"><span>${n}</span><pre>${esc(text)}</pre></div>`).join('');
+
+  // ---- the five scenarios ----
+  const scenarios = [
+    {
+      id: 'slack', tab: 'Slack thread', title: '#platform-infra', sub: 'Thread · 3 replies',
+      body: `<div class="slack">
+        <div class="divider">Today</div>
+        <div class="msg">${av('PR', '#c2410c')}<div><span class="who">Priya Raman</span><span class="when">2:12 PM</span>
+          <div class="text">Heads up: the staging deploy failed again on the migration step. Anyone seen <code>relation "audit_events" already exists</code> before?</div></div></div>
+        <div class="msg">${av('MO', '#0f766e')}<div><span class="who">Marcus Oyelaran</span><span class="when">2:19 PM</span>
+          <div class="text">Yeah, I hit that yesterday. I think the migration was applied by hand during the incident on Tuesday, so the schema_migrations table never got the row for it.</div></div></div>
+        <div class="msg">${av('PR', '#c2410c')}<div><span class="who">Priya Raman</span><span class="when">2:21 PM</span>
+          <div class="text">That would explain it. <b>@you</b> can you take a look before the 3pm release? We can either insert the missing row or make the migration idempotent.</div></div></div>
+      </div>`,
+      foot: `<div class="rich field" contenteditable="true" data-placeholder="Reply in thread…" spellcheck="false"></div>
+             <p class="hint">Start with something like “Sure, I” or “I'd go with” and pause. With OCR on, the suggestion should be about the migration.</p>`,
+    },
+    {
+      id: 'imessage', tab: 'iMessage', title: 'Sam', sub: 'iMessage',
+      body: `<div class="imsg"><div class="thread">
+        <div class="stamp">Today 5:41 PM</div>
+        <div class="bubble them">hey are we still on for dinner friday?</div>
+        <div class="bubble them">I found a place near the station, thai or ramen?</div>
+        <div class="bubble me">friday works! either is good with me</div>
+        <div class="bubble them">ok ramen then, 7:30?</div>
+        <div class="bubble them">also can you bring the charger you borrowed lol</div>
+      </div></div>`,
+      foot: `<input class="field" type="text" placeholder="iMessage" autocomplete="off">
+             <p class="hint">Try “7:30 is” or “yes, I'll” and pause.</p>`,
+    },
+    {
+      id: 'pr', tab: 'Pull request', title: 'Pull request', sub: 'octo/webhooks',
+      body: `<div class="pr">
+        <p class="title">Fix retry backoff for webhook delivery <span class="num">#482</span></p>
+        <div class="meta"><span class="badge">Open</span>dana-k wants to merge 1 commit into <b>main</b> from <b>fix/webhook-backoff</b></div>
+        <p class="desc">Deliveries were retried every 2 seconds regardless of failure count, which hammered customer endpoints during outages. This switches to exponential backoff with jitter, capped at 5 minutes.</p>
+        <div class="diff">
+          <div class="file">src/webhooks/retry.py</div>
+          <div class="hunk">@@ -12,9 +12,15 @@ def schedule_retry(delivery, attempt):</div>
+          ${diffLines([
+            ['ctx', 12, 'def schedule_retry(delivery, attempt):'],
+            ['del', 13, '    delay = 2'],
+            ['add', 13, '    base = min(2 ** attempt, 300)'],
+            ['add', 14, '    delay = base + random.uniform(0, base * 0.1)'],
+            ['ctx', 15, '    if attempt >= MAX_ATTEMPTS:'],
+            ['ctx', 16, '        mark_failed(delivery)'],
+            ['ctx', 17, '        return'],
+            ['del', 18, '    queue.enqueue(delivery, delay=delay)'],
+            ['add', 19, '    queue.enqueue(delivery, delay=delay, attempt=attempt + 1)'],
+          ])}
+        </div>
+      </div>`,
+      foot: `<textarea class="field" placeholder="Leave a review comment…" spellcheck="false"></textarea>
+             <p class="hint">Try “Looks good overall, but” or “Should the jitter” and pause.</p>`,
+    },
+    {
+      id: 'commit', tab: 'Commit message', title: 'git commit', sub: '~/Work/api-gateway',
+      body: `<div class="commit"><div class="term"><span class="p">$</span> git diff --staged
+<span class="h">diff --git a/gateway/auth.go b/gateway/auth.go</span>
+<span class="h">@@ -41,6 +41,11 @@ func (m *Middleware) Handle(w http.ResponseWriter, r *http.Request) {</span>
+ 	token := bearerToken(r)
+<span class="a">+	if token == "" {</span>
+<span class="a">+		http.Error(w, "missing bearer token", http.StatusUnauthorized)</span>
+<span class="a">+		m.metrics.Unauthorized.Inc()</span>
+<span class="a">+		return</span>
+<span class="a">+	}</span>
+ 	claims, err := m.verifier.Verify(r.Context(), token)
+ 	if err != nil {
+<span class="d">-		http.Error(w, err.Error(), http.StatusUnauthorized)</span>
+<span class="a">+		http.Error(w, "invalid token", http.StatusUnauthorized)</span>
+ 		return
+ 	}
+<span class="m">2 files changed, 9 insertions(+), 1 deletion(-)</span></div></div>`,
+      foot: `<textarea class="field mono" placeholder="Write a commit message for the staged change…" spellcheck="false"></textarea>
+             <p class="hint">Try “Reject requests” or “Return 401 when” and pause.</p>`,
+    },
+    {
+      id: 'email', tab: 'Email reply', title: 'Inbox', sub: 'Reply',
+      body: `<div class="mail">
+        <p class="subject">Timeline for the onboarding revamp</p>
+        <div class="from">${av('LN', '#1d4ed8')}<div><div class="name">Lena Novak <span class="addr">&lt;lena@northwindlabs.com&gt;</span></div><div class="addr">to me · 10:04 AM</div></div></div>
+        <div class="body">
+          <p>Hi,</p>
+          <p>Thanks for the demo on Tuesday, the team was impressed with the new flow. Before I take this to our leadership meeting on Thursday I need two things from you:</p>
+          <p>1. A realistic date for the pilot with our support team. You mentioned late October, is that still accurate?<br>2. Whether the SSO integration is included in the pilot or comes later.</p>
+          <p>If late October slips, I would rather know now than in a month.</p>
+          <p>Best,<br>Lena</p>
+        </div>
+      </div>`,
+      foot: `<textarea class="field" placeholder="Reply to Lena…" spellcheck="false"></textarea>
+             <p class="hint">Try “Hi Lena, thanks for” or “Late October is” and pause.</p>`,
+    },
+  ];
+
+  let current = 0;
+  function renderNav() {
+    $('nav').innerHTML = scenarios.map((s, i) => `<button data-i="${i}" aria-current="${i === current}">${i + 1}. ${esc(s.tab)}</button>`).join('');
+    $('nav').querySelectorAll('button').forEach(b => b.onclick = () => show(+b.dataset.i));
+  }
+  function show(i) {
+    current = i; const s = scenarios[i];
+    $('scene').innerHTML = `<div class="scene-head"><h2>${esc(s.title)}</h2><span class="sub">${esc(s.sub)}</span></div>
+      <div class="scene-body">${s.body}</div><div class="scene-foot">${s.foot}</div>`;
+    renderNav();
+    const field = $('scene').querySelector('.field'); if (field) field.focus();
+    try { localStorage.setItem('omatab-scenario', String(i)); } catch (_) {}
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.altKey && e.key >= '1' && e.key <= '5') { show(+e.key - 1); e.preventDefault(); }
+  });
+
+  // ---- status + controls ----
+  const state = { status: null, offset: null, shown: 0, accepted: 0, latencies: [] };
+  function renderStatus(status) {
+    state.status = status; const s = status.settings || {};
+    const keys = (s.full_accept_keys || []).join(' or ') || '…';
+    $('pills').innerHTML = [
+      ['Oma Tab', status.enabled ? 'on' : 'off', status.enabled],
+      ['OCR', s.ocr ? 'on' : 'off', s.ocr],
+      ['keys', `Tab · ${keys}`, true],
+      ['model', (status.model_id && status.model_id !== 'custom') ? status.model_id : (status.model || '?').split('/').pop(), status.model_loaded],
+    ].map(([k, v, on]) => `<span class="pill ${on ? 'on' : ''}">${k} <b>${esc(v)}</b></span>`).join('');
+    $('btnToggle').textContent = status.enabled ? 'Suggestions: on' : 'Suggestions: off';
+    $('btnOcr').textContent = s.ocr ? 'OCR: on' : 'OCR: off';
+    $('btnTelemetry').textContent = s.telemetry ? 'Telemetry: on' : 'Telemetry: off';
+    const b = $('banner');
+    if (!status.installed) { b.hidden = false; b.className = 'banner bad'; b.textContent = 'Oma Tab is not installed for this user. Run scripts/install-omarchy-user.sh.'; }
+    else if (status.input_method !== 'omatab') { b.hidden = false; b.className = 'banner'; b.textContent = 'Oma Tab is not the active input method. Select it in Fcitx (Ctrl+Space cycles), then click the reply field.'; }
+    else if (!s.ocr) { b.hidden = false; b.className = 'banner'; b.textContent = 'OCR is off, so Oma Tab cannot read the thread on screen and suggestions will only follow your own words. Turn OCR on for the full demo.'; }
+    else if (!status.model_loaded) { b.hidden = false; b.className = 'banner'; b.textContent = 'The model is not loaded yet; the first suggestion may take a few seconds.'; }
+    else b.hidden = true;
+  }
+  async function fetchStatus() {
+    try { const r = await fetch('/api/status', { cache: 'no-store' }); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); renderStatus(j); }
+    catch (e) { $('pills').innerHTML = `<span class="pill">status <b>unavailable</b></span>`; const b = $('banner'); b.hidden = false; b.className = 'banner bad'; b.textContent = `Could not read status: ${e.message}`; }
+  }
+  async function action(name) {
+    const buttons = document.querySelectorAll('.actions button'); buttons.forEach(b => b.disabled = true);
+    try { const r = await fetch('/api/action/' + name, { method: 'POST' }); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); renderStatus(j); }
+    catch (e) { const b = $('banner'); b.hidden = false; b.className = 'banner bad'; b.textContent = `Action failed: ${e.message}`; }
+    finally { buttons.forEach(b => b.disabled = false); }
+  }
+  $('btnToggle').onclick = () => action(state.status?.enabled ? 'disable' : 'enable');
+  $('btnOcr').onclick = () => action(state.status?.settings?.ocr ? 'ocr-off' : 'ocr-on');
+  $('btnTelemetry').onclick = () => action(state.status?.settings?.telemetry ? 'telemetry-off' : 'telemetry-on');
+  $('btnDrawer').onclick = () => { const d = $('drawer'); d.hidden = !d.hidden; $('btnDrawer').textContent = d.hidden ? "Show Oma Tab's view" : "Hide Oma Tab's view"; };
+
+  // ---- browser-side preedit mirror ----
+  document.addEventListener('compositionupdate', (e) => { $('preedit').innerHTML = e.data ? `caret<b>${esc(e.data)}</b>` : '<span class="muted">…</span>'; });
+  document.addEventListener('compositionend', () => { setTimeout(() => { $('preedit').innerHTML = '<span class="muted">No suggestion showing.</span>'; }, 150); });
+
+  // ---- telemetry feed ----
+  function median(a) { if (!a.length) return '–'; const s = [...a].sort((x, y) => x - y); return Math.round(s[Math.floor(s.length / 2)]); }
+  function renderStats() { $('sShown').textContent = state.shown; $('sAccepted').textContent = state.accepted; $('sLatency').textContent = median(state.latencies); }
+  function addFeed(tag, html) {
+    const feed = $('feed'); $('feedEmpty')?.remove();
+    const li = document.createElement('li'); li.innerHTML = `<span class="tag ${tag}">${esc(tag.replace('_', ' '))}</span><span class="txt">${html}</span>`;
+    feed.prepend(li); while (feed.children.length > 40) feed.lastChild.remove();
+  }
+  function handle(ev) {
+    switch (ev.type) {
+      case 'model_result':
+        if (ev.outcome === 'shown') { state.shown++; state.latencies.push(ev.latency_ms || 0);
+          addFeed('shown', `<span class="ctx">…${esc((ev.textbox_prefix || '').slice(-26))}</span><span class="sug">${esc(ev.suggestion || '')}</span><span class="meta">${Math.round(ev.latency_ms || 0)} ms${ev.ocr_age_ms >= 0 ? ' · screen ' + (Math.round(ev.ocr_age_ms / 100) / 10) + 's old' : ' · no screen context'}</span>`); }
+        else if (ev.outcome === 'empty') addFeed('empty', `<span class="ctx">…${esc((ev.textbox_prefix || '').slice(-26))}</span><span class="meta">model returned nothing</span>`);
+        else if (ev.outcome === 'request_error') addFeed('request_error', `<span class="meta">${esc(ev.error || 'error')}</span>`);
+        break;
+      case 'accept_word': state.accepted++; addFeed('accept_word', `<span class="sug">${esc(ev.accepted_piece || '')}</span><span class="ctx">${esc(ev.remaining_suggestion || '')}</span>`); break;
+      case 'accept_full': state.accepted++; addFeed('accept_full', `<span class="sug">${esc(ev.accepted_piece || '')}</span>`); break;
+      case 'dismiss': addFeed('dismiss', `<span class="ctx">${esc(ev.original_suggestion || '')}</span>`); break;
+      case 'typed_over': addFeed('typed_over', `typed <b>${esc(ev.typed || '')}</b> over <span class="ctx">${esc(ev.remaining_suggestion || '')}</span><span class="meta">${ev.matched ? 'suggestion had it right' : 'suggestion was wrong'}</span>`); break;
+      case 'config_applied': addFeed('config_applied', `full accept: <b>${esc(ev.full_accept_key || '')}</b> · OCR ${ev.screen_context ? 'on' : 'off'}`); fetchStatus(); break;
+      case 'service_start': addFeed('service_start', 'Oma Tab restarted'); fetchStatus(); break;
+    }
+    renderStats();
+  }
+  async function poll() {
+    try { const url = '/api/events' + (state.offset === null ? '' : `?after=${state.offset}`); const r = await fetch(url, { cache: 'no-store' }); const j = await r.json(); state.offset = j.offset; (j.events || []).forEach(handle); }
+    catch (_) {}
+    setTimeout(poll, 400);
+  }
+
+  let start = 0; try { start = Math.min(4, Math.max(0, +(localStorage.getItem('omatab-scenario') || 0))); } catch (_) {}
+  show(start); fetchStatus(); setInterval(fetchStatus, 8000); poll();
+})();
+</script>
+</body>
+</html>

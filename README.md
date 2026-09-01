@@ -80,8 +80,25 @@ omatab model install qwen-smart
 omatab model use qwen-fast
 omatab warm              # preload the model
 omatab doctor            # health check, exit 0 only when fully working
+omatab demo              # local playground page for trying it out
 omatab uninstall         # remove Oma Tab; --purge also deletes settings and logs
 ```
+
+## Try it
+
+```bash
+omatab demo
+```
+
+serves a playground page on loopback and opens it in your browser. It has a
+prose field, a rich-text editor, a single-line field, and a password field
+that must stay silent. Because Oma Tab is an input method, suggestions appear
+in those fields exactly as they do everywhere else. The page mirrors the
+suggestion the browser sees through composition events, and when telemetry is
+on it shows Oma Tab's own view of each keystroke: what was shown, accepted,
+typed past, or cancelled, with latency. A checklist ticks itself as each
+behavior is observed, and the page has buttons for the on/off, OCR, and
+telemetry switches.
 
 ## Settings
 

@@ -58,6 +58,8 @@ install(
         packaging/systemd/omatab-model-warm.timer
     DESTINATION share/systemd/user
 )
+install(FILES demo/index.html DESTINATION share/omatab/demo)
+install(PROGRAMS demo/serve.py DESTINATION share/omatab/demo)
 
 if(BUILD_TESTING)
     add_executable(omatab-policy-test tests/policy_test.cpp)

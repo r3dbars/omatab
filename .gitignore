@@ -1,2 +1,3 @@
 /build/
 /.profile.codex-tmp
+__pycache__/

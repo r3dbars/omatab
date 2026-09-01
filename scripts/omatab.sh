@@ -28,8 +28,9 @@ Commands:
   toggle                  Flip suggestions on or off
   telemetry [on|off]      Show or set the private local suggestion log
   ocr [on|off]            Show or set screen-text (OCR) context capture
-  key full-accept [KEY]   Show or set the key that accepts a whole suggestion
-                          (Tab always accepts one word). Example: Shift+Tab
+  key full-accept [KEY..] Show or set the key(s) that accept a whole suggestion
+                          (Tab always accepts one word). Examples: Shift+Tab,
+                          or several: grave asciitilde
   config [--json]         Show all settings
   warm                    Warm the configured model without blocking
   restart                 Restart the Fcitx service that hosts Oma Tab
@@ -37,6 +38,7 @@ Commands:
   model install ID        Download, verify, and use a supported model
   model use ID            Use an already-downloaded supported model
   doctor [--json]         Health check; exit 0 only when fully working
+  demo [--port N]         Open the local playground page for trying it out
   uninstall [--purge]     Remove Oma Tab from this user account
                           (--purge also deletes settings and the telemetry log)
   commands [--json]       List commands for agents and shell completion
@@ -54,13 +56,14 @@ commands_json() {
     {command: "toggle", args: [], mutates: true, description: "Flip suggestions on or off"},
     {command: "telemetry", args: ["on|off", "--json"], mutates: true, description: "Show or set the private local suggestion log"},
     {command: "ocr", args: ["on|off", "--json"], mutates: true, description: "Show or set screen-text (OCR) context capture"},
-    {command: "key", args: ["full-accept", "KEY", "--json"], mutates: true, description: "Show or set the whole-suggestion accept key"},
+    {command: "key", args: ["full-accept", "KEY...", "--json"], mutates: true, description: "Show or set the whole-suggestion accept key(s)"},
     {command: "config", args: ["--json"], mutates: false, description: "Show all settings"},
     {command: "warm", args: [], mutates: false, description: "Warm the configured model"},
     {command: "restart", args: [], mutates: true, description: "Restart the Fcitx service"},
     {command: "models", args: ["--json"], mutates: false, description: "List supported model choices"},
     {command: "model", args: ["install|use", "ID"], mutates: true, description: "Download and/or switch to a supported model"},
     {command: "doctor", args: ["--json"], mutates: false, description: "Health check with non-zero exit on problems"},
+    {command: "demo", args: ["--port N", "--no-open"], mutates: false, description: "Serve the local playground page on loopback and open it"},
     {command: "uninstall", args: ["--purge", "--json"], mutates: true, description: "Remove Oma Tab from this user account"},
     {command: "commands", args: ["--json"], mutates: false, description: "This list"}
   ]'
@@ -79,6 +82,7 @@ config_value() {
   printf '%s' "${value:-$fallback}"
 }
 
+# Prints the keys of a list option, space separated (0=grave 1=asciitilde).
 config_key_value() {
   local section=$1 fallback=$2
   local value=
@@ -86,7 +90,7 @@ config_key_value() {
     value=$(awk -v section="[$section]" '
       $0 == section {inside = 1; next}
       /^\[/ {inside = 0}
-      inside && sub(/^0=/, "") {print; exit}' "$config_file")
+      inside && sub(/^[0-9]+=/, "") {printf "%s%s", sep, $0; sep = " "}' "$config_file")
   fi
   printf '%s' "${value:-$fallback}"
 }
@@ -117,13 +121,14 @@ write_setting() {
     FullAcceptKey) full_accept=$value ;;
   esac
   mkdir -p "$(dirname "$config_file")"
-  install -m 600 /dev/stdin "$config_file" <<EOF
-ScreenContext=$ocr
-Telemetry=$telemetry
-
-[FullAcceptKey]
-0=$full_accept
-EOF
+  {
+    printf 'ScreenContext=%s\nTelemetry=%s\n\n[FullAcceptKey]\n' "$ocr" "$telemetry"
+    local index=0
+    for key in $full_accept; do
+      printf '%d=%s\n' "$index" "$key"
+      index=$((index + 1))
+    done
+  } | install -m 600 /dev/stdin "$config_file"
   reload_addon_config
 }
 
@@ -143,7 +148,7 @@ config_json() {
     --arg fullAccept "$(config_key_value FullAcceptKey Shift+Tab)" \
     --arg logPath "$log_path" \
     '{config_file: $file, telemetry: $telemetry, ocr: $ocr,
-      word_accept_key: "Tab", full_accept_key: $fullAccept,
+      word_accept_key: "Tab", full_accept_keys: ($fullAccept | split(" ")),
       telemetry_log: $logPath}'
 }
 
@@ -174,24 +179,26 @@ setting_command() {
 key_command() {
   local which=${1:-}; shift || true
   [[ $which == full-accept ]] || { echo "Only the full-accept key is configurable; Tab always accepts one word." >&2; return 2; }
-  local value= json=false
+  local keys=() json=false
   for arg in "$@"; do
     case "$arg" in
       --json) json=true ;;
-      *) value=$arg ;;
+      *) keys+=("$arg") ;;
     esac
   done
-  if [[ -n $value ]]; then
-    if [[ ! $value =~ ^((Control|Ctrl|Shift|Alt|Super|Hyper)\+)*[A-Za-z0-9_]+$ ]]; then
-      echo "Key must look like Shift+Tab, Control+Return, or grave" >&2
-      return 2
-    fi
-    write_setting FullAcceptKey "$value"
+  if ((${#keys[@]} > 0)); then
+    for key in "${keys[@]}"; do
+      if [[ ! $key =~ ^((Control|Ctrl|Shift|Alt|Super|Hyper)\+)*[A-Za-z0-9_]+$ ]]; then
+        echo "Key must look like Shift+Tab, Control+Return, grave, or asciitilde" >&2
+        return 2
+      fi
+    done
+    write_setting FullAcceptKey "${keys[*]}"
   fi
   local current
   current=$(config_key_value FullAcceptKey Shift+Tab)
   if [[ $json == true ]]; then
-    jq -nc --arg key "$current" '{word_accept_key: "Tab", full_accept_key: $key}'
+    jq -nc --arg keys "$current" '{word_accept_key: "Tab", full_accept_keys: ($keys | split(" "))}'
   else
     printf 'Word accept: Tab\nFull accept: %s\n' "$current"
   fi
@@ -551,7 +558,7 @@ show_status() {
     "Context: " + (.context_length | tostring),
     "OCR context: " + (if .settings.ocr then "on" else "off" end),
     "Telemetry: " + (if .settings.telemetry then "on" else "off" end),
-    "Keys: Tab = word, " + .settings.full_accept_key + " = full",
+    "Keys: Tab = word, " + (.settings.full_accept_keys | join(" or ")) + " = full",
     "Latency p50: " + ((.telemetry.latency_ms.p50 // "n/a") | tostring) + (if .telemetry.latency_ms.p50 then " ms" else "" end)
   ' <<<"$json"
 }
@@ -652,6 +659,20 @@ case "$command" in
       show_status "$status"
     fi
     jq -e '.healthy' <<<"$healthy" >/dev/null
+    ;;
+  demo)
+    demo_dir=$HOME/.local/share/omatab/demo
+    [[ -f $demo_dir/serve.py ]] || { echo "Demo files are not installed; rerun the installer." >&2; exit 3; }
+    port=8765
+    open_flag=--open
+    while (($# > 0)); do
+      case "$1" in
+        --port) port=${2:-8765}; shift 2 ;;
+        --no-open) open_flag=; shift ;;
+        *) shift ;;
+      esac
+    done
+    exec python3 "$demo_dir/serve.py" --port "$port" $open_flag
     ;;
   -h|--help|help)
     usage
