@@ -15,6 +15,7 @@
 #include <fcitx/text.h>
 
 #include "policy.h"
+#include "suggestion.h"
 
 namespace {
 
@@ -22,6 +23,7 @@ constexpr char kSuggestion[] = " — Tilde is working";
 
 struct TildeState final : fcitx::InputContextProperty {
     std::string buffer;
+    std::string remainingSuggestion;
 };
 
 void clearSuggestion(fcitx::InputContext *inputContext) {
@@ -31,12 +33,13 @@ void clearSuggestion(fcitx::InputContext *inputContext) {
 }
 
 void showSuggestion(fcitx::InputContext *inputContext,
-                    const std::string &buffer) {
+                    const std::string &buffer,
+                    const std::string &remainingSuggestion) {
     fcitx::Text preedit;
     preedit.append(buffer);
     preedit.append(
-        kSuggestion,
-        {fcitx::TextFormatFlag::Underline, fcitx::TextFormatFlag::DontCommit});
+        remainingSuggestion,
+        {fcitx::TextFormatFlag::Bold, fcitx::TextFormatFlag::DontCommit});
     preedit.setCursor(buffer.size());
 
     if (inputContext->capabilityFlags().test(fcitx::CapabilityFlag::Preedit)) {
@@ -69,6 +72,9 @@ std::string printableText(const fcitx::Key &key) {
 tilde::Event classify(const fcitx::Key &key) {
     if (key.check(FcitxKey_Tab)) {
         return tilde::Event::Tab;
+    }
+    if (key.check(FcitxKey_grave) || key.check(FcitxKey_asciitilde)) {
+        return tilde::Event::FullAccept;
     }
     if (key.check(FcitxKey_Escape)) {
         return tilde::Event::Escape;
@@ -109,28 +115,53 @@ public:
         auto *inputContext = event.inputContext();
         auto *state = inputContext->propertyFor(&stateFactory_);
 
-        switch (tilde::decide(!state->buffer.empty(),
+        switch (tilde::decide(!state->remainingSuggestion.empty(),
                               classify(event.key()))) {
-        case tilde::Effect::AcceptSuggestion:
-            inputContext->commitString(state->buffer + kSuggestion);
+        case tilde::Effect::AcceptNextWord: {
+            const auto length =
+                tilde::nextWordLength(state->remainingSuggestion);
+            state->buffer.append(state->remainingSuggestion, 0, length);
+            state->remainingSuggestion.erase(0, length);
+            if (state->remainingSuggestion.empty()) {
+                if (!state->buffer.empty() && state->buffer.back() != ' ') {
+                    state->buffer.push_back(' ');
+                }
+                inputContext->commitString(state->buffer);
+                state->buffer.clear();
+                clearSuggestion(inputContext);
+            } else {
+                showSuggestion(inputContext, state->buffer,
+                               state->remainingSuggestion);
+            }
+            event.filterAndAccept();
+            return;
+        }
+        case tilde::Effect::AcceptFullSuggestion:
+            inputContext->commitString(state->buffer +
+                                       state->remainingSuggestion);
             state->buffer.clear();
+            state->remainingSuggestion.clear();
             clearSuggestion(inputContext);
             event.filterAndAccept();
             return;
         case tilde::Effect::DismissSuggestion:
             inputContext->commitString(state->buffer);
             state->buffer.clear();
+            state->remainingSuggestion.clear();
             clearSuggestion(inputContext);
             event.filterAndAccept();
             return;
         case tilde::Effect::ClearSuggestion:
             inputContext->commitString(state->buffer);
             state->buffer.clear();
+            state->remainingSuggestion.clear();
             clearSuggestion(inputContext);
             return;
         case tilde::Effect::ShowSuggestion:
             state->buffer += printableText(event.key());
-            showSuggestion(inputContext, state->buffer);
+            state->remainingSuggestion = kSuggestion;
+            showSuggestion(inputContext, state->buffer,
+                           state->remainingSuggestion);
             event.filterAndAccept();
             return;
         case tilde::Effect::PassThrough:
@@ -142,6 +173,7 @@ public:
         auto *state = event.inputContext()->propertyFor(&stateFactory_);
         event.inputContext()->commitString(state->buffer);
         state->buffer.clear();
+        state->remainingSuggestion.clear();
         clearSuggestion(event.inputContext());
     }
 

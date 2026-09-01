@@ -3,8 +3,9 @@
 Minimal Linux proof of Tilde's quiet inline writing suggestions.
 
 The first milestone is intentionally small: an Fcitx5 input method that shows
-a fixed inline suggestion after printable input. `Tab` accepts the visible
-suggestion and `Esc` dismisses it. This proves the input boundary before any
+a fixed inline suggestion after printable input. `Tab` accepts the next word,
+backtick/tilde accepts the full phrase, and `Esc` dismisses it. This proves the
+input boundary before any
 model runtime, history, screen capture, or settings UI is added.
 
 ## Current scope
@@ -14,7 +15,11 @@ model runtime, history, screen capture, or settings UI is added.
 - Fixed, non-model-generated proof suggestion
 - User-local installation under `~/.local`
 
-The proof suggestion is ` — Tilde is working`.
+The proof suggestion is ` — Tilde is working`. Each word accepted with `Tab`
+includes one trailing space; the final word also adds a trailing space.
+
+The current visual experiment renders the continuation with Fcitx's
+`Bold`/active style, directly after the normal caret with no boundary marker.
 
 For this English-layout proof, Tilde owns plain printable keys as a short IME
 composition and commits them on acceptance, dismissal, or an editing boundary.

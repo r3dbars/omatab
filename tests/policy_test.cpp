@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include "policy.h"
+#include "suggestion.h"
 
 namespace {
 
@@ -24,9 +25,13 @@ int main() {
     expect("printable shows suggestion", decide(false, Event::Printable),
            Effect::ShowSuggestion);
     expect("tab accepts visible suggestion", decide(true, Event::Tab),
-           Effect::AcceptSuggestion);
+           Effect::AcceptNextWord);
     expect("tab passes through without suggestion", decide(false, Event::Tab),
            Effect::PassThrough);
+    expect("backtick accepts full visible suggestion",
+           decide(true, Event::FullAccept), Effect::AcceptFullSuggestion);
+    expect("backtick passes through without suggestion",
+           decide(false, Event::FullAccept), Effect::PassThrough);
     expect("escape dismisses visible suggestion", decide(true, Event::Escape),
            Effect::DismissSuggestion);
     expect("escape passes through without suggestion", decide(false, Event::Escape),
@@ -37,6 +42,23 @@ int main() {
            Effect::PassThrough);
     expect("unrelated input passes through", decide(true, Event::Other),
            Effect::PassThrough);
+
+    const std::string suggestion = " — Tilde is working";
+    const auto first = tilde::nextWordLength(suggestion);
+    if (suggestion.substr(0, first) == " — Tilde ") {
+        std::cout << "PASS first word keeps leading punctuation and space\n";
+    } else {
+        std::cerr << "FAIL first word keeps leading punctuation and space\n";
+        ++failures;
+    }
+
+    const auto second = tilde::nextWordLength("is working");
+    if (std::string("is working").substr(0, second) == "is ") {
+        std::cout << "PASS next word includes trailing space\n";
+    } else {
+        std::cerr << "FAIL next word includes trailing space\n";
+        ++failures;
+    }
 
     return failures == 0 ? 0 : 1;
 }

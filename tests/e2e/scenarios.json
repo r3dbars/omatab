@@ -2,9 +2,23 @@
   "schema_version": 1,
   "scenarios": [
     {
-      "id": "accept-inline-suggestion",
+      "id": "accept-next-word",
       "initial_text": "Tilde",
       "keys": ["Tab"],
+      "expected_text": "Tilde — Tilde ",
+      "expected_visible_suggestion": "is working"
+    },
+    {
+      "id": "accept-full-suggestion-with-backtick",
+      "initial_text": "Tilde",
+      "keys": ["grave"],
+      "expected_text": "Tilde — Tilde is working",
+      "expected_visible_suggestion": false
+    },
+    {
+      "id": "accept-full-suggestion-with-tilde",
+      "initial_text": "Tilde",
+      "keys": ["asciitilde"],
       "expected_text": "Tilde — Tilde is working",
       "expected_visible_suggestion": false
     },
