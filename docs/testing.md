@@ -15,7 +15,8 @@ duplicated, lost, or whether a key was consumed incorrectly.
    Tilde, type like a person, press Tab/Escape, capture a screenshot, and compare
    the final text with `tests/e2e/scenarios.json`.
 4. **Local-model tests** verify Ollama request JSON, response parsing,
-   sanitization, stale-response rejection, and record live endpoint latency.
+   sanitization, stale-response rejection, structured context bounds, OCR
+   window parsing/privacy exclusions, and record live endpoint latency.
 5. **GPT review** scores usefulness, style fit, and repetition from saved model
    outputs. GPT reviews only artifacts from a completed deterministic run.
 

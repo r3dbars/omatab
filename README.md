@@ -12,14 +12,19 @@ dismisses it.
 - Fcitx5 input-method addon
 - Client-side preedit where the application supports it
 - Debounced, asynchronous local inference through Ollama
+- Cursor-aware surrounding-text context with bounded UTF-8 prefix and suffix
+- Throttled, in-memory OCR of the active window for visible app context
 - Stale-response rejection by input-context UUID and revision
-- Fixed proof suggestion as an immediate fallback
+- No placeholder suggestion while inference is pending or unavailable
 - User-local installation under `~/.local`
 
-The default model is `qwen2.5-coder:1.5b-base`. Requests begin after a 120 ms
-typing pause, generate at most 16 tokens, and keep the model loaded for 30
-minutes. The proof fallback is ` — Tilde is working`. Each word accepted with
-`Tab` includes one trailing space; the final word also adds a trailing space.
+The fast completion model is `qwen2.5-coder:1.5b-base`. When visible OCR
+context is available, Tilde routes through `qwen2.5:1.5b` to fuse that context
+with the exact text before and after the caret. Requests begin after a 120 ms
+typing pause, generate at most 16 tokens, and keep models loaded for 30 minutes.
+Each word accepted with `Tab` includes one trailing space; the final word also
+adds a trailing space. Pending, failed, timed-out, and empty model requests show
+no suggestion, leaving native `Tab` behavior intact.
 
 The current visual experiment renders the continuation with Fcitx's
 `Bold`/active style, directly after the normal caret with no boundary marker.
@@ -42,8 +47,12 @@ application matrix.
 - Exact Tab acceptance is not yet proven end to end.
 - The GUI runner requires `ydotool`; `wtype` bypasses the Fcitx path and is not
   a valid input-method test.
-- The model currently sees only text typed through the active Tilde context,
-  not the full document or surrounding application context.
+- Apps exposing Fcitx surrounding text provide up to 4 KiB before the caret and
+  1 KiB after it. Other apps use recent Tilde-tracked text as a fallback.
+- Active-window OCR is cached for two seconds and capped at 4 KiB. It sees only
+  rendered content, not hidden/scrolled-off document content or browser DOM.
+- Password/sensitive input contexts and known password-manager windows never
+  trigger predictions or OCR.
 
 ## Build and install
 
@@ -56,6 +65,7 @@ On Omarchy, install the CUDA runtime and pull the default model:
 omarchy pkg add ollama-cuda
 sudo systemctl enable --now ollama.service
 ollama pull qwen2.5-coder:1.5b-base
+ollama pull qwen2.5:1.5b
 ```
 
 ```bash
@@ -95,8 +105,9 @@ local-model latency/output checks, and GPT quality review. See
 ## Planned architecture
 
 1. Fcitx5 owns key routing, inline preedit, and deterministic acceptance.
-2. A single worker debounces typing and calls Ollama's localhost API without
-   blocking the Fcitx event loop.
+2. A single worker debounces typing, captures throttled active-window OCR in
+   memory, and calls Ollama's localhost API without blocking the Fcitx event
+   loop.
 3. Input-context revisions prevent older responses from replacing newer text.
 4. A future context service can add document/window context without changing
    the acceptance path.

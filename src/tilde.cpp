@@ -25,16 +25,17 @@
 #include <fcitx/instance.h>
 #include <fcitx/text.h>
 
+#include "context.h"
+#include "ocr_context.h"
 #include "ollama_client.h"
 #include "policy.h"
 #include "suggestion.h"
 
 namespace {
 
-constexpr char kSuggestion[] = " — Tilde is working";
-
 struct TildeState final : fcitx::InputContextProperty {
     std::string context;
+    std::string requestPrefix;
     std::string remainingSuggestion;
     std::uint64_t revision = 0;
 };
@@ -44,6 +45,7 @@ struct CompletionJob {
     std::uint64_t revision;
     std::uint64_t requestId;
     std::string prefix;
+    std::string suffix;
 };
 
 class CompletionWorker {
@@ -67,11 +69,12 @@ public:
     }
 
     void request(fcitx::ICUUID inputContextId, std::uint64_t revision,
-                 std::string prefix) {
+                 std::string prefix, std::string suffix) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             pending_ = CompletionJob{std::move(inputContextId), revision,
-                                     ++nextRequestId_, std::move(prefix)};
+                                     ++nextRequestId_, std::move(prefix),
+                                     std::move(suffix)};
         }
         condition_.notify_one();
     }
@@ -98,7 +101,11 @@ private:
             auto job = std::move(*pending_);
             pending_.reset();
             lock.unlock();
-            auto result = client_.complete(job.prefix);
+            const auto visibleContext = ocrContext_.context();
+            auto result = visibleContext.empty()
+                              ? client_.complete(job.prefix, job.suffix)
+                              : client_.completeWithContext(
+                                    job.prefix, job.suffix, visibleContext);
             instance_->eventDispatcher().schedule(
                 [callback = callback_, job = std::move(job),
                  result = std::move(result)]() mutable {
@@ -110,6 +117,7 @@ private:
 
     fcitx::Instance *instance_;
     ResultCallback callback_;
+    tilde::OcrContextProvider ocrContext_;
     tilde::OllamaClient client_;
     std::mutex mutex_;
     std::condition_variable condition_;
@@ -160,6 +168,19 @@ std::string printableText(const fcitx::Key &key) {
                                  : std::string{};
 }
 
+tilde::ContextWindow contextFor(fcitx::InputContext *inputContext,
+                                const std::string &trackedFallback) {
+    const auto &surrounding = inputContext->surroundingText();
+    const bool usableSurrounding =
+        inputContext->capabilityFlags().test(
+            fcitx::CapabilityFlag::SurroundingText) &&
+        surrounding.isValid() && surrounding.cursor() == surrounding.anchor();
+    return tilde::buildContextWindow(
+        usableSurrounding ? surrounding.text() : std::string_view{},
+        usableSurrounding ? surrounding.cursor() : 0, usableSurrounding,
+        trackedFallback);
+}
+
 tilde::Event classify(const fcitx::Key &key) {
     if (key.check(FcitxKey_Tab)) {
         return tilde::Event::Tab;
@@ -204,7 +225,7 @@ public:
                 }
                 auto *state = inputContext->propertyFor(&stateFactory_);
                 if (!tilde::suggestionRequestIsCurrent(
-                        state->revision, state->context, job.revision,
+                        state->revision, state->requestPrefix, job.revision,
                         job.prefix)) {
                     return;
                 }
@@ -282,14 +303,18 @@ public:
             return;
         case tilde::Effect::ShowSuggestion: {
             const auto typed = printableText(event.key());
+            auto context = contextFor(inputContext, state->context);
+            context.prefix = tilde::keepLastUtf8Bytes(context.prefix + typed,
+                                                      4096);
             clearSuggestion(inputContext);
             state->context += typed;
             inputContext->commitString(typed);
             ++state->revision;
-            state->remainingSuggestion = kSuggestion;
-            showSuggestion(inputContext, state->remainingSuggestion);
+            state->requestPrefix = context.prefix;
+            state->remainingSuggestion.clear();
             completionWorker_->request(inputContext->uuid(), state->revision,
-                                       state->context);
+                                       std::move(context.prefix),
+                                       std::move(context.suffix));
             event.filterAndAccept();
             return;
         }

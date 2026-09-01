@@ -12,9 +12,16 @@ struct OllamaResult {
 };
 
 std::string buildOllamaRequest(std::string_view model,
-                               std::string_view prefix);
+                               std::string_view prefix,
+                               std::string_view suffix = {});
 std::string parseOllamaSuggestion(std::string_view responseBody);
 std::string sanitizeSuggestion(std::string suggestion);
+std::string buildOllamaContextRequest(std::string_view model,
+                                      std::string_view prefix,
+                                      std::string_view suffix,
+                                      std::string_view visibleContext);
+std::string ensureInsertionBoundary(std::string_view prefix,
+                                    std::string suggestion);
 
 class OllamaClient {
 public:
@@ -22,11 +29,17 @@ public:
         std::string endpoint = "http://127.0.0.1:11434/api/generate",
         std::string model = "qwen2.5-coder:1.5b-base");
 
-    OllamaResult complete(std::string_view prefix) const;
+    OllamaResult complete(std::string_view prefix,
+                          std::string_view suffix = {}) const;
+    OllamaResult completeWithContext(std::string_view prefix,
+                                     std::string_view suffix,
+                                     std::string_view visibleContext) const;
 
 private:
     std::string endpoint_;
     std::string model_;
+    std::string contextEndpoint_ = "http://127.0.0.1:11434/api/chat";
+    std::string contextModel_ = "qwen2.5:1.5b";
 };
 
 } // namespace tilde

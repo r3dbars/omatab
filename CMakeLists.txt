@@ -9,7 +9,7 @@ find_package(Threads REQUIRED)
 pkg_check_modules(LIBCURL REQUIRED IMPORTED_TARGET libcurl)
 pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
 
-add_library(tilde-model STATIC src/ollama_client.cpp)
+add_library(tilde-model STATIC src/ocr_context.cpp src/ollama_client.cpp)
 set_target_properties(tilde-model PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(tilde-model PUBLIC cxx_std_17)
 target_compile_options(tilde-model PRIVATE -Wall -Wextra -Wpedantic -Werror)
