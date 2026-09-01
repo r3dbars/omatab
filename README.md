@@ -90,6 +90,23 @@ marker under `~/.local/state/tilde/` tells the running addon to pass keys
 through without requesting suggestions. Selecting Tilde in Fcitx remains a
 separate input-method choice.
 
+### Model picker
+
+The control interface exposes a curated local-model catalog for the companion
+Omarchy panel:
+
+```bash
+tilde-control models --json
+tilde-control model install qwen-balanced
+tilde-control model use qwen-smart
+```
+
+Installing a model downloads it through Ollama, warms and validates it, and
+only then changes Tilde's managed user-service drop-ins. A failed service
+switch restores the previous configuration. Qwen profiles enable FIM; Gemma
+profiles use natural continuation. Official Gemma downloads require accepting
+Google's model terms on Hugging Face first.
+
 For this English-layout proof, Tilde commits plain printable keys immediately
 and keeps only its unaccepted continuation in IME preedit. This prevents
 toolkits without formatted-preedit support from styling the user's real text as
