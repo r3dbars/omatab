@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -47,6 +48,32 @@ std::chrono::milliseconds predictionDelay() {
     return end && *end == '\0' && parsed >= 0 && parsed <= 1000
                ? std::chrono::milliseconds(parsed)
                : std::chrono::milliseconds(kDefaultDelay);
+}
+
+std::filesystem::path disabledMarkerPath() {
+    if (const auto *configured = std::getenv("TILDE_DISABLED_FILE");
+        configured && *configured) {
+        return configured;
+    }
+    if (const auto *stateHome = std::getenv("XDG_STATE_HOME");
+        stateHome && *stateHome) {
+        return std::filesystem::path(stateHome) / "tilde" / "disabled";
+    }
+    if (const auto *home = std::getenv("HOME"); home && *home) {
+        return std::filesystem::path(home) / ".local" / "state" / "tilde" /
+               "disabled";
+    }
+    return {};
+}
+
+bool predictionsEnabled() {
+    const auto marker = disabledMarkerPath();
+    if (marker.empty()) {
+        return true;
+    }
+    std::error_code error;
+    const bool disabled = std::filesystem::exists(marker, error);
+    return error ? true : !disabled;
 }
 
 struct TildeState final : fcitx::InputContextProperty {
@@ -317,6 +344,17 @@ public:
 
         auto *inputContext = event.inputContext();
         auto *state = inputContext->propertyFor(&stateFactory_);
+
+        if (!predictionsEnabled()) {
+            if (!state->remainingSuggestion.empty()) {
+                ++state->revision;
+                recordAction("disabled", *state);
+                state->remainingSuggestion.clear();
+                clearSuggestion(inputContext);
+                clearSuggestionState(*state);
+            }
+            return;
+        }
 
         if (inputContext->capabilityFlags().test(
                 fcitx::CapabilityFlag::PasswordOrSensitive)) {

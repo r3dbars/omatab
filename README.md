@@ -70,6 +70,26 @@ be committed or uploaded. Generate an agent-readable quality summary with:
 The current visual experiment renders the continuation with Fcitx's
 `Bold`/active style, directly after the normal caret with no boundary marker.
 
+## Local controls
+
+The user installation includes a small JSON-capable control command for shell
+plugins and diagnostics:
+
+```bash
+tilde-control status --json
+tilde-control enable
+tilde-control disable
+tilde-control warm
+tilde-control restart
+tilde-control doctor
+```
+
+The companion Omarchy plugin uses this interface instead of editing Tilde's
+files directly. Enable and disable are instantaneous and global: a private
+marker under `~/.local/state/tilde/` tells the running addon to pass keys
+through without requesting suggestions. Selecting Tilde in Fcitx remains a
+separate input-method choice.
+
 For this English-layout proof, Tilde commits plain printable keys immediately
 and keeps only its unaccepted continuation in IME preedit. This prevents
 toolkits without formatted-preedit support from styling the user's real text as

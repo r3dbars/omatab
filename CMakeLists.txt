@@ -43,6 +43,11 @@ install(
     RENAME tilde-telemetry-report
 )
 install(
+    PROGRAMS scripts/tilde-control.sh
+    DESTINATION bin
+    RENAME tilde-control
+)
+install(
     PROGRAMS scripts/warm-model.sh
     DESTINATION libexec
     RENAME tilde-warm-model
