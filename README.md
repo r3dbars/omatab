@@ -66,6 +66,11 @@ Proof** to the active input-method group and select it. Type in a disposable
 document. Press `Tab` only while the suggestion is visible; press `Esc` to
 dismiss it.
 
+For a system-wide test, copy `packaging/fcitx5-global.conf` to
+`~/.config/fcitx5/config` and restart Fcitx. This shares one input-method state
+across compatible applications: `Ctrl+Space` toggles between Tilde and the
+normal keyboard. Password fields remain excluded.
+
 ## Safety gate
 
 This proof must not duplicate or lose committed text, consume `Tab` or `Esc`
