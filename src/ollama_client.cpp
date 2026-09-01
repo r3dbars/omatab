@@ -1,6 +1,7 @@
 #include "ollama_client.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cerrno>
 #include <cctype>
@@ -49,7 +50,7 @@ double configuredNumber(const char *name, double fallback, double minimum,
 }
 
 Json::Value configuredKeepAlive() {
-    const auto *value = std::getenv("TILDE_KEEP_ALIVE");
+    const auto *value = std::getenv("OMATAB_KEEP_ALIVE");
     if (!value || !*value) {
         return "30m";
     }
@@ -65,10 +66,15 @@ Json::Value configuredKeepAlive() {
                : Json::Value("30m");
 }
 
+// FIM is on by default because the default model supports it. Set
+// OMATAB_FIM=0 for plain-continuation models such as Gemma.
 bool configuredFim() {
-    const auto *value = std::getenv("TILDE_FIM");
-    return value && (std::string_view(value) == "1" ||
-                     std::string_view(value) == "true");
+    const auto *value = std::getenv("OMATAB_FIM");
+    if (!value || !*value) {
+        return true;
+    }
+    return std::string_view(value) != "0" &&
+           std::string_view(value) != "false";
 }
 
 std::string fimPrompt(std::string_view prefix, std::string_view suffix) {
@@ -85,7 +91,7 @@ std::size_t appendResponse(char *data, std::size_t size, std::size_t count,
 
 } // namespace
 
-namespace tilde {
+namespace omatab {
 
 std::string buildOllamaRequest(std::string_view model,
                                std::string_view prefix,
@@ -104,13 +110,13 @@ std::string buildOllamaRequest(std::string_view model,
     request["stream"] = false;
     request["keep_alive"] = configuredKeepAlive();
     request["options"]["num_predict"] = static_cast<Json::Int64>(
-        configuredInteger("TILDE_NUM_PREDICT", 16, 1, 64));
+        configuredInteger("OMATAB_NUM_PREDICT", 16, 1, 64));
     request["options"]["num_ctx"] = static_cast<Json::Int64>(
-        configuredInteger("TILDE_NUM_CTX", 8192, 1024, 32768));
+        configuredInteger("OMATAB_NUM_CTX", 8192, 1024, 32768));
     request["options"]["temperature"] =
-        configuredNumber("TILDE_TEMPERATURE", 0.2, 0.0, 2.0);
+        configuredNumber("OMATAB_TEMPERATURE", 0.2, 0.0, 2.0);
     request["options"]["top_p"] =
-        configuredNumber("TILDE_TOP_P", 0.9, 0.0, 1.0);
+        configuredNumber("OMATAB_TOP_P", 0.9, 0.0, 1.0);
     request["options"]["stop"].append("\n");
     request["options"]["stop"].append("<|fim_pad|>");
     request["options"]["stop"].append("<|endoftext|>");
@@ -143,13 +149,13 @@ std::string buildOllamaContextRequest(std::string_view model,
     request["stream"] = false;
     request["keep_alive"] = configuredKeepAlive();
     request["options"]["num_predict"] = static_cast<Json::Int64>(
-        configuredInteger("TILDE_NUM_PREDICT", 16, 1, 64));
+        configuredInteger("OMATAB_NUM_PREDICT", 16, 1, 64));
     request["options"]["num_ctx"] = static_cast<Json::Int64>(
-        configuredInteger("TILDE_NUM_CTX", 8192, 1024, 32768));
+        configuredInteger("OMATAB_NUM_CTX", 8192, 1024, 32768));
     request["options"]["temperature"] =
-        configuredNumber("TILDE_TEMPERATURE", 0.2, 0.0, 2.0);
+        configuredNumber("OMATAB_TEMPERATURE", 0.2, 0.0, 2.0);
     request["options"]["top_p"] =
-        configuredNumber("TILDE_TOP_P", 0.9, 0.0, 1.0);
+        configuredNumber("OMATAB_TOP_P", 0.9, 0.0, 1.0);
     request["options"]["stop"].append("\n");
     request["options"]["stop"].append("<think>");
     request["options"]["stop"].append("<|fim_pad|>");
@@ -185,6 +191,104 @@ std::string sanitizeSuggestion(std::string suggestion) {
     return suggestion;
 }
 
+std::string limitToClause(std::string suggestion) {
+    const auto isSentenceEnd = [](char c) {
+        return c == '.' || c == '!' || c == '?';
+    };
+    const auto isClauseEnd = [](char c) {
+        return c == ',' || c == ';' || c == ':';
+    };
+    const auto isClosing = [](char c) {
+        return c == '"' || c == '\'' || c == ')' || c == ']' || c == '}';
+    };
+    const auto boundaryAfter = [&suggestion](std::size_t index) {
+        return index + 1 >= suggestion.size() ||
+               std::isspace(static_cast<unsigned char>(suggestion[index + 1]));
+    };
+    // "e.g. the", "U.S. army", "Dr. who": the mark belongs to an
+    // abbreviation when the token before it is a single letter or already
+    // dotted, or when the next word starts in lowercase.
+    const auto looksLikeAbbreviation = [&suggestion](std::size_t markIndex,
+                                                     std::size_t endIndex) {
+        auto tokenStart = markIndex;
+        while (tokenStart > 0 &&
+               !std::isspace(
+                   static_cast<unsigned char>(suggestion[tokenStart - 1]))) {
+            --tokenStart;
+        }
+        const auto token = std::string_view(suggestion).substr(
+            tokenStart, markIndex - tokenStart);
+        if (token.size() == 1 && std::isalpha(static_cast<unsigned char>(token[0]))) {
+            return true;
+        }
+        if (token.find('.') != std::string_view::npos) {
+            return true;
+        }
+        constexpr std::array knownAbbreviations{
+            "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs",
+            "etc", "no", "fig", "approx", "dept", "inc", "ltd", "co"};
+        std::string lowered(token);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                       [](unsigned char ch) {
+                           return static_cast<char>(std::tolower(ch));
+                       });
+        if (std::find(knownAbbreviations.begin(), knownAbbreviations.end(),
+                      lowered) != knownAbbreviations.end()) {
+            return true;
+        }
+        auto next = endIndex + 1;
+        while (next < suggestion.size() &&
+               std::isspace(static_cast<unsigned char>(suggestion[next]))) {
+            ++next;
+        }
+        return next < suggestion.size() &&
+               std::islower(static_cast<unsigned char>(suggestion[next]));
+    };
+
+    bool sawWord = false;
+    for (std::size_t i = 0; i < suggestion.size(); ++i) {
+        const auto c = suggestion[i];
+        if (std::isalnum(static_cast<unsigned char>(c)) ||
+            static_cast<unsigned char>(c) >= 0x80U) {
+            sawWord = true;
+            continue;
+        }
+        if (isSentenceEnd(c)) {
+            auto end = i;
+            while (end + 1 < suggestion.size() &&
+                   isSentenceEnd(suggestion[end + 1])) {
+                ++end;
+            }
+            while (end + 1 < suggestion.size() &&
+                   isClosing(suggestion[end + 1])) {
+                ++end;
+            }
+            if (boundaryAfter(end) &&
+                !(c == '.' && looksLikeAbbreviation(i, end))) {
+                suggestion.resize(end + 1);
+                break;
+            }
+            i = end;
+            continue;
+        }
+        if (sawWord && isClauseEnd(c) && boundaryAfter(i)) {
+            suggestion.resize(i + 1);
+            break;
+        }
+    }
+
+    // An em dash starts a new clause; stop before it.
+    if (const auto dash = suggestion.find("\xE2\x80\x94");
+        dash != std::string::npos && sawWord) {
+        suggestion.resize(dash);
+        while (!suggestion.empty() &&
+               std::isspace(static_cast<unsigned char>(suggestion.back()))) {
+            suggestion.pop_back();
+        }
+    }
+    return suggestion;
+}
+
 std::string parseOllamaSuggestion(std::string_view responseBody) {
     Json::CharReaderBuilder reader;
     Json::Value response;
@@ -214,12 +318,12 @@ std::string ensureInsertionBoundary(std::string_view prefix,
 
 OllamaClient::OllamaClient(std::string endpoint, std::string model)
     : endpoint_(std::move(endpoint)), model_(std::move(model)) {
-    if (const auto *configuredModel = std::getenv("TILDE_MODEL");
+    if (const auto *configuredModel = std::getenv("OMATAB_MODEL");
         configuredModel && *configuredModel) {
         model_ = configuredModel;
     }
     if (const auto *configuredContextModel =
-            std::getenv("TILDE_CONTEXT_MODEL");
+            std::getenv("OMATAB_CONTEXT_MODEL");
         configuredContextModel && *configuredContextModel) {
         contextModel_ = configuredContextModel;
     }
@@ -298,7 +402,7 @@ OllamaResult OllamaClient::perform(const std::string &endpoint,
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 150L);
     curl_easy_setopt(
         curl, CURLOPT_TIMEOUT_MS,
-        configuredInteger("TILDE_TIMEOUT_MS", 2500, 250, 10000));
+        configuredInteger("OMATAB_TIMEOUT_MS", 2500, 250, 10000));
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendResponse);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
@@ -364,7 +468,8 @@ OllamaResult OllamaClient::perform(const std::string &endpoint,
     } else {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.statusCode);
         if (result.statusCode == 200) {
-            result.suggestion = parseOllamaSuggestion(responseBody);
+            result.suggestion =
+                limitToClause(parseOllamaSuggestion(responseBody));
         } else {
             result.error = "Ollama returned HTTP " +
                            std::to_string(result.statusCode);
@@ -376,4 +481,4 @@ OllamaResult OllamaClient::perform(const std::string &endpoint,
     return result;
 }
 
-} // namespace tilde
+} // namespace omatab

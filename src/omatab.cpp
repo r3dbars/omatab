@@ -14,6 +14,10 @@
 #include <vector>
 
 #include <json/json.h>
+#include <fcitx-config/configuration.h>
+#include <fcitx-config/iniparser.h>
+#include <fcitx-config/option.h>
+#include <fcitx-config/rawconfig.h>
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/keysym.h>
@@ -35,11 +39,31 @@
 #include "suggestion.h"
 #include "telemetry.h"
 
+namespace omatab {
+
+// User settings. Stored at ~/.config/fcitx5/conf/omatab.conf and editable
+// with `omatab` or fcitx5-configtool; changes apply live.
+FCITX_CONFIGURATION(
+    OmatabConfig,
+    fcitx::KeyListOption fullAcceptKey{
+        this, "FullAcceptKey", "Accept the whole suggestion",
+        {fcitx::Key("Shift+Tab")}, fcitx::KeyListConstrain()};
+    fcitx::Option<bool> screenContext{
+        this, "ScreenContext",
+        "Read text on the active window (OCR) for extra context", false};
+    fcitx::Option<bool> telemetry{
+        this, "Telemetry",
+        "Record a private local log of suggestions for tuning", false};);
+
+constexpr const char *kConfigFile = "conf/omatab.conf";
+
+} // namespace omatab
+
 namespace {
 
 std::chrono::milliseconds predictionDelay() {
     constexpr long kDefaultDelay = 120;
-    const auto *configured = std::getenv("TILDE_DEBOUNCE_MS");
+    const auto *configured = std::getenv("OMATAB_DEBOUNCE_MS");
     if (!configured || !*configured) {
         return std::chrono::milliseconds(kDefaultDelay);
     }
@@ -51,16 +75,16 @@ std::chrono::milliseconds predictionDelay() {
 }
 
 std::filesystem::path disabledMarkerPath() {
-    if (const auto *configured = std::getenv("TILDE_DISABLED_FILE");
+    if (const auto *configured = std::getenv("OMATAB_DISABLED_FILE");
         configured && *configured) {
         return configured;
     }
     if (const auto *stateHome = std::getenv("XDG_STATE_HOME");
         stateHome && *stateHome) {
-        return std::filesystem::path(stateHome) / "tilde" / "disabled";
+        return std::filesystem::path(stateHome) / "omatab" / "disabled";
     }
     if (const auto *home = std::getenv("HOME"); home && *home) {
-        return std::filesystem::path(home) / ".local" / "state" / "tilde" /
+        return std::filesystem::path(home) / ".local" / "state" / "omatab" /
                "disabled";
     }
     return {};
@@ -76,7 +100,7 @@ bool predictionsEnabled() {
     return error ? true : !disabled;
 }
 
-struct TildeState final : fcitx::InputContextProperty {
+struct OmatabState final : fcitx::InputContextProperty {
     std::string context;
     std::string requestPrefix;
     std::string remainingSuggestion;
@@ -102,7 +126,7 @@ struct CompletionJob {
 class CompletionWorker {
 public:
     using ResultCallback =
-        std::function<void(const CompletionJob &, tilde::OllamaResult)>;
+        std::function<void(const CompletionJob &, omatab::OllamaResult)>;
 
     CompletionWorker(fcitx::Instance *instance, ResultCallback callback)
         : instance_(instance), callback_(std::move(callback)),
@@ -120,6 +144,8 @@ public:
             thread_.join();
         }
     }
+
+    void setScreenContext(bool enabled) { screenContext_.store(enabled); }
 
     void request(fcitx::ICUUID inputContextId, std::uint64_t revision,
                  std::string prefix, std::string suffix) {
@@ -163,8 +189,14 @@ private:
                        nextRequestId_.load() != requestId;
             };
             // Answers from cache immediately; a slow capture refreshes in
-            // the background for later requests.
-            auto ocr = ocrContext_.snapshot();
+            // the background for later requests. With screen context off,
+            // only the window identity is looked up for telemetry.
+            omatab::OcrSnapshot ocr;
+            if (screenContext_.load()) {
+                ocr = ocrContext_.snapshot();
+            } else {
+                ocrContext_.refreshActiveWindow();
+            }
             const auto &activeWindow = ocrContext_.activeWindow();
             job.visibleContext = std::move(ocr.text);
             job.ocrAgeMs = ocr.ageMs;
@@ -188,14 +220,15 @@ private:
 
     fcitx::Instance *instance_;
     ResultCallback callback_;
-    tilde::OcrContextProvider ocrContext_;
-    tilde::OllamaClient client_;
+    omatab::OcrContextProvider ocrContext_;
+    omatab::OllamaClient client_;
     std::mutex mutex_;
     std::condition_variable condition_;
     std::optional<CompletionJob> pending_;
     // Written under mutex_, read lock-free by the cancel predicate.
     std::atomic<std::uint64_t> nextRequestId_{0};
     std::atomic<bool> shutdown_{false};
+    std::atomic<bool> screenContext_{false};
     bool stopping_ = false;
     std::thread thread_;
 };
@@ -241,57 +274,66 @@ std::string printableText(const fcitx::Key &key) {
                                  : std::string{};
 }
 
-tilde::ContextWindow contextFor(fcitx::InputContext *inputContext,
+omatab::ContextWindow contextFor(fcitx::InputContext *inputContext,
                                 const std::string &trackedFallback) {
     const auto &surrounding = inputContext->surroundingText();
     const bool usableSurrounding =
         inputContext->capabilityFlags().test(
             fcitx::CapabilityFlag::SurroundingText) &&
         surrounding.isValid() && surrounding.cursor() == surrounding.anchor();
-    return tilde::buildContextWindow(
+    return omatab::buildContextWindow(
         usableSurrounding ? surrounding.text() : std::string_view{},
         usableSurrounding ? surrounding.cursor() : 0, usableSurrounding,
         trackedFallback);
 }
 
-tilde::Event classify(const fcitx::Key &key) {
-    if (key.check(FcitxKey_Tab)) {
-        return tilde::Event::Tab;
+omatab::Event classify(const fcitx::Key &key,
+                       const fcitx::KeyList &fullAcceptKeys) {
+    // Shift+Tab may arrive as ISO_Left_Tab; normalize() folds that back.
+    const auto normalized = key.normalize();
+    if (normalized.checkKeyList(fullAcceptKeys)) {
+        return omatab::Event::FullAccept;
     }
-    if (key.check(FcitxKey_grave) || key.check(FcitxKey_asciitilde)) {
-        return tilde::Event::FullAccept;
+    if (key.check(FcitxKey_Tab)) {
+        return omatab::Event::Tab;
     }
     if (key.check(FcitxKey_Escape)) {
-        return tilde::Event::Escape;
+        return omatab::Event::Escape;
     }
     if (key.check(FcitxKey_BackSpace) || key.check(FcitxKey_Return) ||
         key.check(FcitxKey_KP_Enter) || key.isCursorMove() ||
         key.states().testAny(fcitx::KeyStates{fcitx::KeyState::Ctrl,
                                              fcitx::KeyState::Alt,
                                              fcitx::KeyState::Super})) {
-        return tilde::Event::Editing;
+        return omatab::Event::Editing;
     }
-    return isPlainPrintable(key) ? tilde::Event::Printable
-                                 : tilde::Event::Other;
+    return isPlainPrintable(key) ? omatab::Event::Printable
+                                 : omatab::Event::Other;
 }
 
 } // namespace
 
 namespace fcitx {
 
-class TildeEngine final : public InputMethodEngine {
+class OmatabEngine final : public InputMethodEngine {
 public:
-    explicit TildeEngine(Instance *instance) : instance_(instance) {
+    explicit OmatabEngine(Instance *instance) : instance_(instance) {
+        readAsIni(config_, omatab::kConfigFile);
+        ensureFullAcceptKey();
+        telemetry_.setEnabled(*config_.telemetry);
         Json::Value startupEvent;
         startupEvent["type"] = "service_start";
         startupEvent["telemetry_enabled"] = telemetry_.enabled();
+        startupEvent["screen_context"] = *config_.screenContext;
+        startupEvent["full_accept_key"] =
+            Key::keyListToString(*config_.fullAcceptKey);
         telemetry_.record(std::move(startupEvent));
-        instance->inputContextManager().registerProperty("tildeState",
+        instance->inputContextManager().registerProperty("omatabState",
                                                          &stateFactory_);
         const std::weak_ptr<bool> lifetime = lifetime_;
         completionWorker_ = std::make_unique<CompletionWorker>(
             instance, [this, lifetime](const CompletionJob &job,
-                                      tilde::OllamaResult result) {
+                                      omatab::OllamaResult result) {
                 if (lifetime.expired()) {
                     return;
                 }
@@ -329,7 +371,7 @@ public:
                     return;
                 }
                 auto *state = inputContext->propertyFor(&stateFactory_);
-                if (!tilde::suggestionRequestIsCurrent(
+                if (!omatab::suggestionRequestIsCurrent(
                         state->revision, state->requestPrefix, job.revision,
                         job.prefix)) {
                     modelEvent["outcome"] = "stale";
@@ -351,16 +393,31 @@ public:
                 modelEvent["outcome"] = "shown";
                 telemetry_.record(std::move(modelEvent));
             });
+        completionWorker_->setScreenContext(*config_.screenContext);
     }
 
-    ~TildeEngine() override {
+    const Configuration *getConfig() const override { return &config_; }
+
+    void setConfig(const RawConfig &raw) override {
+        config_.load(raw, true);
+        safeSaveAsIni(config_, omatab::kConfigFile);
+        applyConfig();
+    }
+
+    void reloadConfig() override {
+        readAsIni(config_, omatab::kConfigFile);
+        ensureFullAcceptKey();
+        applyConfig();
+    }
+
+    ~OmatabEngine() override {
         lifetime_.reset();
         completionWorker_.reset();
     }
 
     std::vector<InputMethodEntry> listInputMethods() override {
         std::vector<InputMethodEntry> result;
-        result.emplace_back("tilde", "Tilde Linux Proof", "en", "tilde");
+        result.emplace_back("omatab", "Oma Tab", "en", "omatab");
         return result;
     }
 
@@ -388,12 +445,13 @@ public:
             return;
         }
 
-        switch (tilde::decide(!state->remainingSuggestion.empty(),
-                              classify(event.key()))) {
-        case tilde::Effect::AcceptNextWord: {
+        switch (omatab::decide(!state->remainingSuggestion.empty(),
+                              classify(event.key(),
+                                       *config_.fullAcceptKey))) {
+        case omatab::Effect::AcceptNextWord: {
             ++state->revision;
             const auto length =
-                tilde::nextWordLength(state->remainingSuggestion);
+                omatab::nextWordLength(state->remainingSuggestion);
             auto accepted = state->remainingSuggestion.substr(0, length);
             state->remainingSuggestion.erase(0, length);
             if (state->remainingSuggestion.empty()) {
@@ -414,7 +472,7 @@ public:
             event.filterAndAccept();
             return;
         }
-        case tilde::Effect::AcceptFullSuggestion:
+        case omatab::Effect::AcceptFullSuggestion:
             ++state->revision;
             state->acceptedSuggestion += state->remainingSuggestion;
             recordAction("accept_full", *state,
@@ -426,7 +484,7 @@ public:
             clearSuggestionState(*state);
             event.filterAndAccept();
             return;
-        case tilde::Effect::DismissSuggestion:
+        case omatab::Effect::DismissSuggestion:
             ++state->revision;
             recordAction("dismiss", *state);
             state->remainingSuggestion.clear();
@@ -434,7 +492,7 @@ public:
             clearSuggestionState(*state);
             event.filterAndAccept();
             return;
-        case tilde::Effect::ClearSuggestion:
+        case omatab::Effect::ClearSuggestion:
             ++state->revision;
             if (!state->remainingSuggestion.empty()) {
                 recordAction("clear_editing", *state);
@@ -444,13 +502,21 @@ public:
             clearSuggestion(inputContext);
             clearSuggestionState(*state);
             return;
-        case tilde::Effect::ShowSuggestion: {
+        case omatab::Effect::ShowSuggestion: {
             const auto typed = printableText(event.key());
             if (!state->remainingSuggestion.empty()) {
-                recordAction("typed_over", *state);
+                // A typed-over suggestion that began with the same character
+                // was right; the user simply kept typing. Quality reports
+                // separate that from a wrong suggestion.
+                Json::Value detail;
+                detail["typed"] = typed;
+                detail["matched"] =
+                    state->remainingSuggestion.compare(0, typed.size(),
+                                                       typed) == 0;
+                recordAction("typed_over", *state, {}, detail);
             }
             auto context = contextFor(inputContext, state->context);
-            context.prefix = tilde::keepLastUtf8Bytes(context.prefix + typed,
+            context.prefix = omatab::keepLastUtf8Bytes(context.prefix + typed,
                                                       4096);
             clearSuggestion(inputContext);
             state->context += typed;
@@ -473,7 +539,7 @@ public:
             event.filterAndAccept();
             return;
         }
-        case tilde::Effect::PassThrough:
+        case omatab::Effect::PassThrough:
             return;
         }
     }
@@ -491,9 +557,36 @@ public:
     }
 
 private:
-    void recordAction(const char *type, const TildeState &state,
-                      const std::string &accepted = {}) {
+    // A hand-edited file can leave the key list empty, which would make the
+    // whole suggestion unreachable. Fall back to the default binding.
+    void ensureFullAcceptKey() {
+        if (config_.fullAcceptKey->empty()) {
+            config_.fullAcceptKey.setValue(KeyList{Key("Shift+Tab")});
+        }
+    }
+
+    void applyConfig() {
+        telemetry_.setEnabled(*config_.telemetry);
+        if (completionWorker_) {
+            completionWorker_->setScreenContext(*config_.screenContext);
+        }
+        Json::Value event;
+        event["type"] = "config_applied";
+        event["screen_context"] = *config_.screenContext;
+        event["full_accept_key"] =
+            Key::keyListToString(*config_.fullAcceptKey);
+        telemetry_.record(std::move(event));
+    }
+
+    void recordAction(const char *type, const OmatabState &state,
+                      const std::string &accepted = {},
+                      const Json::Value &detail = Json::Value()) {
         Json::Value action;
+        if (detail.isObject()) {
+            for (const auto &key : detail.getMemberNames()) {
+                action[key] = detail[key];
+            }
+        }
         action["type"] = type;
         action["request_id"] =
             static_cast<Json::UInt64>(state.suggestionId);
@@ -505,27 +598,28 @@ private:
         telemetry_.record(std::move(action));
     }
 
-    static void clearSuggestionState(TildeState &state) {
+    static void clearSuggestionState(OmatabState &state) {
         state.originalSuggestion.clear();
         state.acceptedSuggestion.clear();
         state.suggestionId = 0;
     }
 
     Instance *instance_;
-    FactoryFor<TildeState> stateFactory_{
-        [](InputContext &) { return new TildeState(); }};
+    omatab::OmatabConfig config_;
+    FactoryFor<OmatabState> stateFactory_{
+        [](InputContext &) { return new OmatabState(); }};
     std::shared_ptr<bool> lifetime_ = std::make_shared<bool>(true);
-    tilde::TelemetryRecorder telemetry_;
+    omatab::TelemetryRecorder telemetry_;
     std::unique_ptr<CompletionWorker> completionWorker_;
 };
 
-class TildeFactory final : public AddonFactory {
+class OmatabFactory final : public AddonFactory {
 public:
     AddonInstance *create(AddonManager *manager) override {
-        return new TildeEngine(manager->instance());
+        return new OmatabEngine(manager->instance());
     }
 };
 
 } // namespace fcitx
 
-FCITX_ADDON_FACTORY_V2(tilde, fcitx::TildeFactory);
+FCITX_ADDON_FACTORY_V2(omatab, fcitx::OmatabFactory);

@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-namespace tilde {
+namespace omatab {
 
 constexpr bool isAsciiWordCharacter(unsigned char character) {
     return (character >= '0' && character <= '9') ||
@@ -51,4 +51,4 @@ inline bool suggestionRequestIsCurrent(std::uint64_t currentRevision,
     return currentRevision == requestRevision && currentPrefix == requestPrefix;
 }
 
-} // namespace tilde
+} // namespace omatab

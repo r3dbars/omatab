@@ -9,7 +9,7 @@
 #include <string_view>
 #include <thread>
 
-namespace tilde {
+namespace omatab {
 
 struct ActiveWindow {
     std::string address;
@@ -37,8 +37,11 @@ struct OcrSnapshot {
 // Screenshot-plus-OCR is slow (about a second), so it never runs on the
 // caller's thread. snapshot() answers immediately from cache and schedules a
 // background refresh when the cache is missing or older than the cache
-// duration. The active-window lookup and safety check stay synchronous so a
-// cached capture is never handed out for a window that is now blocked.
+// duration. Text older than the maximum age is not served at all: the request
+// goes without OCR context rather than with a stale picture of the screen. A
+// change of active window discards the previous window's capture outright.
+// The active-window lookup and safety check stay synchronous so a cached
+// capture is never handed out for a window that is now blocked.
 class OcrContextProvider {
 public:
     using WindowSource = std::function<ActiveWindow()>;
@@ -46,7 +49,8 @@ public:
 
     OcrContextProvider();
     OcrContextProvider(WindowSource windowSource, Capture capture,
-                       std::chrono::milliseconds cacheDuration);
+                       std::chrono::milliseconds cacheDuration,
+                       std::chrono::milliseconds maximumAge);
     ~OcrContextProvider();
 
     OcrContextProvider(const OcrContextProvider &) = delete;
@@ -55,6 +59,9 @@ public:
     OcrSnapshot snapshot();
     // Convenience wrapper returning only the text.
     std::string context();
+    // Updates activeWindow() without capturing anything. Used when screen
+    // context is switched off but telemetry still wants the window class.
+    void refreshActiveWindow();
     const ActiveWindow &activeWindow() const;
 
     // Blocks until no refresh is running or pending, or the timeout passes.
@@ -67,6 +74,7 @@ private:
     WindowSource windowSource_;
     Capture capture_;
     std::chrono::milliseconds cacheDuration_;
+    std::chrono::milliseconds maximumAge_;
     ActiveWindow activeWindow_;
 
     std::mutex mutex_;
@@ -80,4 +88,4 @@ private:
     std::thread thread_;
 };
 
-} // namespace tilde
+} // namespace omatab

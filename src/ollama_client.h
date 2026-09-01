@@ -6,7 +6,7 @@
 
 #include <curl/curl.h>
 
-namespace tilde {
+namespace omatab {
 
 struct OllamaResult {
     std::string suggestion;
@@ -19,11 +19,21 @@ struct OllamaResult {
     bool cancelled = false;
 };
 
+// The "balanced" catalog entry: a 4B base model with native FIM tokens.
+inline constexpr const char *kDefaultModel =
+    "hf.co/mradermacher/Qwen3.5-4B-Base-GGUF:Q8_0";
+
 std::string buildOllamaRequest(std::string_view model,
                                std::string_view prefix,
                                std::string_view suffix = {});
 std::string parseOllamaSuggestion(std::string_view responseBody);
 std::string sanitizeSuggestion(std::string suggestion);
+// Cuts a continuation down to the smallest useful unit: the rest of the
+// current clause. Stops after sentence-ending punctuation, or after a comma,
+// semicolon, or colon once at least one word has been offered. Keeps decimals
+// and abbreviations intact by requiring whitespace or end of text after the
+// mark.
+std::string limitToClause(std::string suggestion);
 std::string buildOllamaContextRequest(std::string_view model,
                                       std::string_view prefix,
                                       std::string_view suffix,
@@ -39,7 +49,7 @@ public:
 
     OllamaClient(
         std::string endpoint = "http://127.0.0.1:11434/api/generate",
-        std::string model = "qwen2.5-coder:1.5b-base");
+        std::string model = kDefaultModel);
     ~OllamaClient();
 
     OllamaClient(const OllamaClient &) = delete;
@@ -66,8 +76,8 @@ private:
     std::string endpoint_;
     std::string model_;
     std::string contextEndpoint_ = "http://127.0.0.1:11434/api/generate";
-    std::string contextModel_ = "qwen2.5:1.5b";
+    std::string contextModel_ = kDefaultModel;
     CURLM *multi_ = nullptr;
 };
 
-} // namespace tilde
+} // namespace omatab

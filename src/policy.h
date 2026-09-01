@@ -1,6 +1,6 @@
 #pragma once
 
-namespace tilde {
+namespace omatab {
 
 enum class Event {
     Printable,
@@ -42,4 +42,4 @@ constexpr Effect decide(bool suggestionVisible, Event event) {
     return Effect::PassThrough;
 }
 
-} // namespace tilde
+} // namespace omatab

@@ -1,11 +1,11 @@
 [Unit]
-Description=Refresh Tilde's resident Ollama model
+Description=Refresh Oma Tab's resident Ollama model
 
 [Timer]
 OnBootSec=10s
 OnUnitInactiveSec=60s
 Persistent=true
-Unit=tilde-model-warm.service
+Unit=omatab-model-warm.service
 
 [Install]
 WantedBy=timers.target

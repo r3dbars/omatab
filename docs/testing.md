@@ -1,6 +1,6 @@
 # Testing strategy
 
-Tilde treats exact text behavior as a machine-verifiable invariant. A language
+Oma Tab treats exact text behavior as a machine-verifiable invariant. A language
 model may review suggestion quality, but it never decides whether text was
 duplicated, lost, or whether a key was consumed incorrectly.
 
@@ -12,7 +12,7 @@ duplicated, lost, or whether a key was consumed incorrectly.
 2. **Fcitx integration tests** verify addon discovery, activation, preedit,
    commit, reset, and focus changes through Fcitx's test frontend.
 3. **GUI-agent tests** launch a disposable native editor under Hyprland, select
-   Tilde, type like a person, press Tab/Escape, capture a screenshot, and compare
+   Oma Tab, type like a person, press Tab/Escape, capture a screenshot, and compare
    the final text with `tests/e2e/scenarios.json`.
 4. **Local-model tests** verify Ollama request JSON, response parsing,
    sanitization, stale-response rejection, structured context bounds, OCR

@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-namespace tilde {
+namespace omatab {
 
 struct ContextWindow {
     std::string prefix;
@@ -91,4 +91,4 @@ inline ContextWindow buildContextWindow(
             true};
 }
 
-} // namespace tilde
+} // namespace omatab

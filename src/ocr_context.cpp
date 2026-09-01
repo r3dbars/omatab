@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -15,6 +17,23 @@ namespace {
 constexpr std::size_t kMaximumCommandOutput = 64 * 1024;
 constexpr std::size_t kMaximumOcrContext = 4096;
 constexpr auto kOcrCacheDuration = std::chrono::seconds(2);
+constexpr long kDefaultMaximumOcrAgeMs = 5000;
+
+// Oldest capture worth sending. Beyond this a request goes without OCR
+// context while a refresh runs. Override with OMATAB_OCR_MAX_AGE_MS.
+std::chrono::milliseconds configuredMaximumOcrAge() {
+    const auto *value = std::getenv("OMATAB_OCR_MAX_AGE_MS");
+    if (!value || !*value) {
+        return std::chrono::milliseconds(kDefaultMaximumOcrAgeMs);
+    }
+    char *end = nullptr;
+    errno = 0;
+    const auto parsed = std::strtol(value, &end, 10);
+    return errno == 0 && end && *end == '\0' && parsed >= 500 &&
+                   parsed <= 60000
+               ? std::chrono::milliseconds(parsed)
+               : std::chrono::milliseconds(kDefaultMaximumOcrAgeMs);
+}
 
 std::string commandOutput(const std::string &command) {
     std::string output;
@@ -57,7 +76,7 @@ std::string normalizeOcr(std::string text) {
 
 } // namespace
 
-namespace tilde {
+namespace omatab {
 
 ActiveWindow parseActiveWindow(std::string_view json) {
     ActiveWindow window;
@@ -118,13 +137,15 @@ std::string captureWindowText(const ActiveWindow &window) {
 
 OcrContextProvider::OcrContextProvider()
     : OcrContextProvider(hyprlandActiveWindow, captureWindowText,
-                         kOcrCacheDuration) {}
+                         kOcrCacheDuration, configuredMaximumOcrAge()) {}
 
 OcrContextProvider::OcrContextProvider(WindowSource windowSource,
                                        Capture capture,
-                                       std::chrono::milliseconds cacheDuration)
+                                       std::chrono::milliseconds cacheDuration,
+                                       std::chrono::milliseconds maximumAge)
     : windowSource_(std::move(windowSource)), capture_(std::move(capture)),
-      cacheDuration_(cacheDuration), thread_([this] { run(); }) {}
+      cacheDuration_(cacheDuration), maximumAge_(maximumAge),
+      thread_([this] { run(); }) {}
 
 OcrContextProvider::~OcrContextProvider() {
     {
@@ -147,15 +168,21 @@ OcrSnapshot OcrContextProvider::snapshot() {
     std::lock_guard<std::mutex> lock(mutex_);
     OcrSnapshot result;
     const bool sameWindow = activeWindow_.address == cachedAddress_;
-    if (sameWindow && !cachedText_.empty()) {
+    if (!sameWindow) {
+        // Focus moved: what the previous window showed is irrelevant now.
+        cachedAddress_.clear();
+        cachedText_.clear();
+        capturedAt_ = {};
+    }
+    const bool captured = sameWindow && capturedAt_ != decltype(capturedAt_){};
+    const auto age = captured ? now - capturedAt_ : cacheDuration_ * 0;
+    if (captured && !cachedText_.empty() && age < maximumAge_) {
         result.text = cachedText_;
-        result.ageMs = std::chrono::duration<double, std::milli>(
-                           now - capturedAt_)
-                           .count();
+        result.ageMs =
+            std::chrono::duration<double, std::milli>(age).count();
     }
 
-    const bool fresh = sameWindow && capturedAt_ != decltype(capturedAt_){} &&
-                       now - capturedAt_ < cacheDuration_;
+    const bool fresh = captured && age < cacheDuration_;
     if (!fresh) {
         // Coalesce: only the newest geometry matters if several requests
         // arrive while a capture is running.
@@ -167,6 +194,10 @@ OcrSnapshot OcrContextProvider::snapshot() {
 }
 
 std::string OcrContextProvider::context() { return snapshot().text; }
+
+void OcrContextProvider::refreshActiveWindow() {
+    activeWindow_ = windowSource_();
+}
 
 const ActiveWindow &OcrContextProvider::activeWindow() const {
     return activeWindow_;
@@ -205,4 +236,4 @@ void OcrContextProvider::run() {
     }
 }
 
-} // namespace tilde
+} // namespace omatab

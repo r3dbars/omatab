@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Tilde GUI test evidence",
+  "title": "Oma Tab GUI test evidence",
   "type": "object",
   "required": ["scenario", "application", "actual_text", "passed"],
   "properties": {

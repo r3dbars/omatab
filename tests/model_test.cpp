@@ -75,8 +75,9 @@ struct SilentServer {
 } // namespace
 
 int main() {
+    setenv("OMATAB_FIM", "0", 1);
     const auto request =
-        tilde::buildOllamaRequest("test-model", "quoted \"prefix\"",
+        omatab::buildOllamaRequest("test-model", "quoted \"prefix\"",
                                   "later text");
     Json::CharReaderBuilder reader;
     Json::Value parsedRequest;
@@ -101,19 +102,19 @@ int main() {
     expect(parsedRequest["keep_alive"].asString() == "30m",
            "request uses the default model lease");
 
-    setenv("TILDE_NUM_PREDICT", "12", 1);
-    const auto tunedRequest = tilde::buildOllamaRequest("test-model", "text");
+    setenv("OMATAB_NUM_PREDICT", "12", 1);
+    const auto tunedRequest = omatab::buildOllamaRequest("test-model", "text");
     Json::Value parsedTunedRequest;
     std::istringstream tunedInput(tunedRequest);
     expect(Json::parseFromStream(reader, tunedInput, &parsedTunedRequest,
                                  &errors) &&
                parsedTunedRequest["options"]["num_predict"].asInt() == 12,
            "runtime tuning overrides request parameters");
-    unsetenv("TILDE_NUM_PREDICT");
+    unsetenv("OMATAB_NUM_PREDICT");
 
-    setenv("TILDE_KEEP_ALIVE", "-1", 1);
+    setenv("OMATAB_KEEP_ALIVE", "-1", 1);
     const auto residentRequest =
-        tilde::buildOllamaRequest("test-model", "text");
+        omatab::buildOllamaRequest("test-model", "text");
     Json::Value parsedResidentRequest;
     std::istringstream residentInput(residentRequest);
     expect(Json::parseFromStream(reader, residentInput,
@@ -121,10 +122,10 @@ int main() {
                parsedResidentRequest["keep_alive"].isInt() &&
                parsedResidentRequest["keep_alive"].asInt() == -1,
            "runtime setting keeps the model resident indefinitely");
-    unsetenv("TILDE_KEEP_ALIVE");
+    unsetenv("OMATAB_KEEP_ALIVE");
 
-    setenv("TILDE_FIM", "1", 1);
-    const auto fimRequest = tilde::buildOllamaRequest(
+    unsetenv("OMATAB_FIM");
+    const auto fimRequest = omatab::buildOllamaRequest(
         "test-model", "The quick brown fo", " jumped away.");
     Json::Value parsedFimRequest;
     std::istringstream fimInput(fimRequest);
@@ -136,7 +137,7 @@ int main() {
            "FIM request preserves the partial word and text after the caret");
     expect(!parsedFimRequest.isMember("suffix"),
            "FIM request bypasses Ollama's unsupported insert field");
-    const auto fimContextRequest = tilde::buildOllamaContextRequest(
+    const auto fimContextRequest = omatab::buildOllamaContextRequest(
         "test-model", "partial wo", " after", "visible context");
     Json::Value parsedFimContextRequest;
     std::istringstream fimContextInput(fimContextRequest);
@@ -146,9 +147,12 @@ int main() {
                    "partial wo<|fim_suffix|> after<|fim_middle|>") !=
                    std::string::npos,
            "OCR-aware FIM request completes at the exact caret");
-    unsetenv("TILDE_FIM");
+    expect(std::string(omatab::kDefaultModel).find("Qwen3.5-4B-Base") !=
+               std::string::npos,
+           "default model is the balanced Qwen 4B profile");
+    setenv("OMATAB_FIM", "0", 1);
 
-    const auto contextRequest = tilde::buildOllamaContextRequest(
+    const auto contextRequest = omatab::buildOllamaContextRequest(
         "context-model", "before caret", "after caret", "visible label");
     Json::Value parsedContextRequest;
     std::istringstream contextInput(contextRequest);
@@ -165,31 +169,65 @@ int main() {
            "context request ends with textbox prefix");
     expect(parsedContextRequest["suffix"].asString() == "after caret",
            "context request carries textbox suffix");
-    expect(tilde::ensureInsertionBoundary("we should", "continue") ==
+    expect(omatab::ensureInsertionBoundary("we should", "continue") ==
                " continue",
            "context completion inserts a word boundary");
-    expect(tilde::ensureInsertionBoundary("hello ", "world") == "world",
+    expect(omatab::ensureInsertionBoundary("hello ", "world") == "world",
            "existing whitespace is preserved without duplication");
 
-    expect(tilde::parseOllamaSuggestion(
+    expect(omatab::parseOllamaSuggestion(
                R"({"response":" continuation text","done":true})") ==
                " continuation text",
            "response extracts continuation");
-    expect(tilde::parseOllamaSuggestion(
+    expect(omatab::parseOllamaSuggestion(
                R"({"response":" first line\nsecond line"})") ==
                " first line",
            "response is limited to one line");
-    expect(tilde::parseOllamaSuggestion("not json").empty(),
+    expect(omatab::parseOllamaSuggestion("not json").empty(),
            "invalid response is rejected");
-    expect(tilde::sanitizeSuggestion("   ").empty(),
+    expect(omatab::sanitizeSuggestion("   ").empty(),
            "blank suggestion is rejected");
-    expect(tilde::sanitizeSuggestion(" okay<|endoftext|>") == " okay",
+    expect(omatab::sanitizeSuggestion(" okay<|endoftext|>") == " okay",
            "model control tokens are removed");
-    expect(tilde::sanitizeSuggestion(" useful text<think>internal") ==
+    expect(omatab::sanitizeSuggestion(" useful text<think>internal") ==
                " useful text",
            "thinking spillover is removed");
 
-    const auto structured = tilde::buildContextWindow(
+    expect(omatab::limitToClause(" is working now. The next step is") ==
+               " is working now.",
+           "suggestion stops after the sentence ends");
+    expect(omatab::limitToClause(" is working now, and I think we") ==
+               " is working now,",
+           "suggestion stops after the first clause");
+    expect(omatab::limitToClause(" costs 3.5 million, roughly") ==
+               " costs 3.5 million,",
+           "decimal point is not a sentence end");
+    expect(omatab::limitToClause(" e.g. the second one") ==
+               " e.g. the second one",
+           "abbreviation period is not a sentence end");
+    expect(omatab::limitToClause(" in the U.S. and Canada") ==
+               " in the U.S. and Canada",
+           "dotted abbreviation is not a sentence end");
+    expect(omatab::limitToClause(" said Dr. Jones. Then") ==
+               " said Dr. Jones.",
+           "sentence end after an abbreviation is still found");
+    expect(omatab::limitToClause(" over 1,000 people came") ==
+               " over 1,000 people came",
+           "thousands separator is not a clause end");
+    expect(omatab::limitToClause(", and then we left.") == ", and then we left.",
+           "leading punctuation does not produce an empty clause");
+    expect(omatab::limitToClause(" really?! I had no idea.") == " really?!",
+           "repeated end marks stay together");
+    expect(omatab::limitToClause(" \"done.\" Then she left") ==
+               " \"done.\"",
+           "closing quote stays with the sentence end");
+    expect(omatab::limitToClause(" the plan \xE2\x80\x94 if it works") ==
+               " the plan",
+           "em dash starts a new clause");
+    expect(omatab::limitToClause(".") == ".",
+           "bare sentence end is a valid suggestion");
+
+    const auto structured = omatab::buildContextWindow(
         "Earlier text. Cursor here. Later text.", 26, true, "fallback", 4096,
         1024);
     expect(structured.fromSurroundingText,
@@ -200,37 +238,45 @@ int main() {
            "context preserves text after cursor");
 
     const auto fallback =
-        tilde::buildContextWindow("", 0, false, "tracked text", 4096, 1024);
+        omatab::buildContextWindow("", 0, false, "tracked text", 4096, 1024);
     expect(!fallback.fromSurroundingText && fallback.prefix == "tracked text" &&
                fallback.suffix.empty(),
            "tracked context is used when surrounding text is unavailable");
 
-    const auto unicode = tilde::buildContextWindow("a🙂b", 2, true, "", 4096,
+    const auto unicode = omatab::buildContextWindow("a🙂b", 2, true, "", 4096,
                                                    1024);
     expect(unicode.prefix == "a🙂" && unicode.suffix == "b",
            "cursor offsets are converted from characters to UTF-8 bytes");
 
-    expect(tilde::keepLastUtf8Bytes("ab🙂cd", 5) == "cd",
+    expect(omatab::keepLastUtf8Bytes("ab🙂cd", 5) == "cd",
            "prefix truncation never starts inside UTF-8");
 
-    const auto activeWindow = tilde::parseActiveWindow(
+    const auto activeWindow = omatab::parseActiveWindow(
         R"({"address":"0xabc","class":"omawrite","title":"Notes","at":[10,20],"size":[800,600]})");
     expect(activeWindow.valid && activeWindow.x == 10 &&
                activeWindow.height == 600,
            "active window geometry is parsed");
-    expect(tilde::ocrAllowedForWindow(activeWindow),
+    expect(omatab::ocrAllowedForWindow(activeWindow),
            "ordinary application allows OCR");
 
-    const auto passwordWindow = tilde::parseActiveWindow(
+    const auto passwordWindow = omatab::parseActiveWindow(
         R"({"address":"0xdef","class":"1Password","title":"Vault","at":[0,0],"size":[800,600]})");
-    expect(!tilde::ocrAllowedForWindow(passwordWindow),
+    expect(!omatab::ocrAllowedForWindow(passwordWindow),
            "password manager window blocks OCR");
 
     const auto telemetryPath =
-        "/tmp/tilde-telemetry-test-" + std::to_string(getpid()) + ".jsonl";
-    setenv("TILDE_LOG_PATH", telemetryPath.c_str(), 1);
+        "/tmp/omatab-telemetry-test-" + std::to_string(getpid()) + ".jsonl";
+    setenv("OMATAB_LOG_PATH", telemetryPath.c_str(), 1);
     {
-        tilde::TelemetryRecorder telemetry;
+        omatab::TelemetryRecorder telemetry;
+        Json::Value silent;
+        silent["type"] = "test";
+        telemetry.record(silent);
+        struct stat before {};
+        expect(!telemetry.enabled() &&
+                   stat(telemetryPath.c_str(), &before) != 0,
+               "telemetry writes nothing until enabled");
+        telemetry.setEnabled(true);
         Json::Value event;
         event["type"] = "test";
         event["private_text"] = "local only";
@@ -246,10 +292,10 @@ int main() {
     expect(telemetryLine.find("local only") != std::string::npos,
            "telemetry records full event data");
     unlink(telemetryPath.c_str());
-    unsetenv("TILDE_LOG_PATH");
+    unsetenv("OMATAB_LOG_PATH");
 
     {
-        tilde::OllamaClient client("http://127.0.0.1:9/api/generate",
+        omatab::OllamaClient client("http://127.0.0.1:9/api/generate",
                                    "test-model");
         const auto skipped = client.complete("text", {}, [] { return true; });
         expect(skipped.cancelled && skipped.suggestion.empty(),
@@ -261,8 +307,8 @@ int main() {
     {
         SilentServer server;
         expect(server.port != 0, "silent test server is listening");
-        setenv("TILDE_TIMEOUT_MS", "5000", 1);
-        tilde::OllamaClient client(server.endpoint(), "test-model");
+        setenv("OMATAB_TIMEOUT_MS", "5000", 1);
+        omatab::OllamaClient client(server.endpoint(), "test-model");
         std::atomic<bool> superseded{false};
         std::thread canceller([&] {
             std::this_thread::sleep_for(std::chrono::milliseconds(60));
@@ -277,7 +323,7 @@ int main() {
                 std::chrono::steady_clock::now() - started)
                 .count();
         canceller.join();
-        unsetenv("TILDE_TIMEOUT_MS");
+        unsetenv("OMATAB_TIMEOUT_MS");
         expect(result.cancelled, "in-flight request reports cancellation");
         expect(result.suggestion.empty() && result.error == "cancelled",
                "cancelled request yields no suggestion");
@@ -300,20 +346,20 @@ int main() {
 
     {
         std::atomic<int> captures{0};
-        tilde::ActiveWindow fakeWindow;
+        omatab::ActiveWindow fakeWindow;
         fakeWindow.address = "0x1";
         fakeWindow.windowClass = "editor";
         fakeWindow.width = 800;
         fakeWindow.height = 600;
         fakeWindow.valid = true;
-        tilde::OcrContextProvider provider(
+        omatab::OcrContextProvider provider(
             [&fakeWindow] { return fakeWindow; },
-            [&captures](const tilde::ActiveWindow &window) {
+            [&captures](const omatab::ActiveWindow &window) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(80));
                 ++captures;
                 return "seen in " + window.windowClass;
             },
-            std::chrono::milliseconds(150));
+            std::chrono::milliseconds(150), std::chrono::milliseconds(600));
 
         const auto started = std::chrono::steady_clock::now();
         const auto first = provider.snapshot();
@@ -342,6 +388,16 @@ int main() {
                    captures.load() == 2,
                "overlapping refresh requests coalesce into one capture");
 
+        // Wait past the maximum age: text is withheld, refresh scheduled.
+        provider.waitForRefresh(std::chrono::seconds(2));
+        std::this_thread::sleep_for(std::chrono::milliseconds(650));
+        const auto tooOld = provider.snapshot();
+        expect(tooOld.text.empty() && tooOld.ageMs < 0 && tooOld.refreshing,
+               "capture past the maximum age is withheld while refreshing");
+        provider.waitForRefresh(std::chrono::seconds(2));
+        expect(provider.snapshot().text == "seen in editor",
+               "fresh capture after the age limit is served again");
+
         fakeWindow.address = "0x2";
         fakeWindow.windowClass = "1Password";
         const auto blocked = provider.snapshot();
@@ -357,8 +413,8 @@ int main() {
                "new window is captured in the background");
     }
 
-    if (std::getenv("TILDE_LIVE_OCR_TEST")) {
-        tilde::OcrContextProvider provider;
+    if (std::getenv("OMATAB_LIVE_OCR_TEST")) {
+        omatab::OcrContextProvider provider;
         provider.snapshot();
         provider.waitForRefresh(std::chrono::seconds(10));
         const auto liveText = provider.context();

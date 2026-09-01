@@ -1,0 +1,7 @@
+[Unit]
+Description=Keep Oma Tab's local model warm in Ollama
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/libexec/omatab-warm-model

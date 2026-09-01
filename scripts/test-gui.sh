@@ -6,9 +6,9 @@ if ! command -v ydotool >/dev/null 2>&1; then
   exit 2
 fi
 
-run_dir=$(mktemp -d -t tilde-e2e.XXXXXX)
+run_dir=$(mktemp -d -t omatab-e2e.XXXXXX)
 result_path="$run_dir/agent-proof.md"
-expected=$'Agent proof: \nAgentHello — Tilde is working'
+expected=$'Agent proof: \nAgentHello — Oma Tab is working'
 current_workspace=$(hyprctl -j activeworkspace | jq -r '.id')
 test_workspace=9
 test_pid=
@@ -56,15 +56,15 @@ fi
 active=
 for _ in {1..50}; do
   fcitx5-remote -o
-  fcitx5-remote -s tilde
+  fcitx5-remote -s omatab
   active=$(fcitx5-remote -n)
-  if [[ "$active" == tilde ]]; then
+  if [[ "$active" == omatab ]]; then
     break
   fi
   sleep 0.1
 done
-if [[ "$active" != tilde ]]; then
-  printf 'FAIL could not activate Tilde; active input method is <%s>\n' "$active" >&2
+if [[ "$active" != omatab ]]; then
+  printf 'FAIL could not activate Oma Tab; active input method is <%s>\n' "$active" >&2
   exit 1
 fi
 

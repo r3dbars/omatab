@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <fcntl.h>
+#include <filesystem>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -14,7 +15,7 @@ namespace {
 constexpr std::size_t kDefaultMaximumBytes = 50U * 1024U * 1024U;
 
 std::size_t configuredMaximumBytes() {
-    const auto *value = std::getenv("TILDE_LOG_MAX_BYTES");
+    const auto *value = std::getenv("OMATAB_LOG_MAX_BYTES");
     if (!value || !*value) {
         return kDefaultMaximumBytes;
     }
@@ -61,19 +62,43 @@ bool writeAll(int descriptor, const std::string &data) {
     return true;
 }
 
-} // namespace
-
-namespace tilde {
-
-TelemetryRecorder::TelemetryRecorder() {
-    if (const auto *configuredPath = std::getenv("TILDE_LOG_PATH");
+std::string defaultLogPath() {
+    if (const auto *configuredPath = std::getenv("OMATAB_LOG_PATH");
         configuredPath && *configuredPath) {
-        path_ = configuredPath;
-        maximumBytes_ = configuredMaximumBytes();
+        return configuredPath;
     }
+    if (const auto *stateHome = std::getenv("XDG_STATE_HOME");
+        stateHome && *stateHome) {
+        return std::string(stateHome) + "/omatab/events.jsonl";
+    }
+    if (const auto *home = std::getenv("HOME"); home && *home) {
+        return std::string(home) + "/.local/state/omatab/events.jsonl";
+    }
+    return {};
 }
 
-bool TelemetryRecorder::enabled() const { return !path_.empty(); }
+} // namespace
+
+namespace omatab {
+
+TelemetryRecorder::TelemetryRecorder()
+    : path_(defaultLogPath()), maximumBytes_(configuredMaximumBytes()) {}
+
+bool TelemetryRecorder::enabled() const {
+    return enabled_.load() && !path_.empty();
+}
+
+void TelemetryRecorder::setEnabled(bool enabled) {
+    if (enabled && !path_.empty()) {
+        std::error_code error;
+        const auto directory = std::filesystem::path(path_).parent_path();
+        std::filesystem::create_directories(directory, error);
+        ::chmod(directory.c_str(), S_IRWXU);
+    }
+    enabled_.store(enabled);
+}
+
+const std::string &TelemetryRecorder::path() const { return path_; }
 
 void TelemetryRecorder::record(Json::Value event) {
     if (!enabled()) {
@@ -109,4 +134,4 @@ void TelemetryRecorder::record(Json::Value event) {
     ::close(descriptor);
 }
 
-} // namespace tilde
+} // namespace omatab

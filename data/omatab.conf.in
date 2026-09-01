@@ -1,9 +1,10 @@
 [Addon]
-Name=Tilde Linux Proof
-Comment=Minimal inline writing suggestion proof for Fcitx5
+Name=Oma Tab
+Comment=Quiet inline writing suggestions from a local model
 Type=SharedLibrary
-Library=libtilde
+Library=libomatab
 Category=InputMethod
+Configurable=True
 Version=@PROJECT_VERSION@
 
 [Addon/Dependencies]

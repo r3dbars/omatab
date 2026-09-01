@@ -9,6 +9,6 @@ cmake -S "$repo_root" -B "$repo_root/build" -G Ninja \
 cmake --build "$repo_root/build"
 ctest --test-dir "$repo_root/build" --output-on-failure
 
-test -f "$repo_root/build/libtilde.so"
-test -f "$repo_root/build/tilde.conf"
+test -f "$repo_root/build/libomatab.so"
+test -f "$repo_root/build/omatab.conf"
 echo "PASS addon artifacts exist"

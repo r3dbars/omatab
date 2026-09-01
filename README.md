@@ -1,204 +1,178 @@
-# Tilde Linux
+# Oma Tab
 
-Minimal Linux proof of Tilde's quiet inline writing suggestions.
+Quiet inline writing suggestions for Linux, powered by a local model. Type,
+pause, and a short continuation appears after your caret. `Tab` accepts one
+word, `Shift+Tab` accepts the whole suggestion, `Esc` dismisses it. Nothing
+leaves your machine.
 
-The current milestone is intentionally small: an Fcitx5 input method that asks
-a local Ollama model for an inline continuation after printable input. `Tab`
-accepts the next word, backtick/tilde accepts the full phrase, and `Esc`
-dismisses it.
+Oma Tab is the Linux port of [Tilde](https://github.com/r3dbars/tilde), built
+as an Fcitx5 input method and tuned for Omarchy.
 
-## Current scope
+## How it works
 
-- Fcitx5 input-method addon
-- Client-side preedit where the application supports it
-- Debounced, asynchronous local inference through Ollama
-- Cursor-aware surrounding-text context with bounded UTF-8 prefix and suffix
-- Throttled, in-memory OCR of the active window for visible app context,
-  captured on a background thread so it never delays a suggestion
-- Stale-response rejection by input-context UUID and revision
-- In-flight request cancellation as soon as a newer keystroke supersedes it
-- No placeholder suggestion while inference is pending or unavailable
-- User-local installation under `~/.local`
+- An Fcitx5 input-method addon owns key routing, inline preedit, and
+  deterministic acceptance.
+- A worker thread debounces typing and asks a local Ollama model for a
+  continuation after a 120 ms pause. A request still running when the next
+  keystroke arrives is aborted immediately; Ollama stops generating when the
+  connection closes, so the GPU moves straight to the newest text.
+- Suggestions are trimmed to the rest of the current clause: they stop after
+  sentence-ending punctuation, or after a comma, semicolon, colon, or em dash
+  once at least one word has been offered. A shorter suggestion is a smaller
+  commitment to accept and easier to judge at a glance.
+- Cursor-aware surrounding text gives the model up to 4 KiB before the caret
+  and 1 KiB after it in apps that expose it. Other apps use recently typed
+  text as a fallback.
+- Optional screen-text context reads the active window with OCR on a
+  background thread and never delays a suggestion. See Settings.
+- Password and sensitive input contexts, and known password-manager windows,
+  never trigger predictions or capture.
 
-The fast completion model is `qwen2.5-coder:1.5b-base`. When visible OCR
-context is available, Tilde routes through `qwen2.5:1.5b` to fuse that context
-with the exact text before and after the caret. Both paths use raw continuation
-prompts rather than chat framing so the model completes the user's writing
-instead of replying to it. Requests begin after a 120 ms
-typing pause, generate at most 16 tokens, and keep models loaded for 30 minutes.
-Each word accepted with `Tab` includes one trailing space; the final word also
-adds a trailing space. Pending, failed, timed-out, and empty model requests show
-no suggestion, leaving native `Tab` behavior intact. A request still running when
-the next keystroke arrives is aborted immediately; Ollama stops generating when
-the connection closes, so the GPU moves straight to the newest text instead
-of finishing work that would be rejected as stale.
+The default model is the balanced profile, `Qwen3.5-4B-Base` at Q8_0 through
+Ollama (about 4.3 GB). It uses native fill-in-the-middle tokens, so Oma Tab
+can complete a partial word and condition on text after the caret. Faster and
+smarter Qwen profiles and Gemma profiles are available through the model
+picker.
 
-Set `TILDE_MODEL` and `TILDE_CONTEXT_MODEL` in the Fcitx5 service environment
-to test alternate completion and OCR-context models without rebuilding. Both
-paths use an 8K context window. The main tuning controls are
-`TILDE_DEBOUNCE_MS` (default `120`), `TILDE_NUM_PREDICT` (`16`),
-`TILDE_TEMPERATURE` (`0.2`), and `TILDE_TOP_P` (`0.9`). Operational controls
-are `TILDE_NUM_CTX` (`8192`) and `TILDE_TIMEOUT_MS` (`2500`). Invalid or
-out-of-range values safely fall back to these defaults.
-
-Set `TILDE_KEEP_ALIVE=-1` to keep a model resident indefinitely. The optional
-`tilde-model-warm.timer` preloads the configured model and refreshes that lease
-every minute, including after Ollama restarts. Enable it with:
-
-```bash
-systemctl --user enable --now tilde-model-warm.timer
-```
-
-Set `TILDE_FIM=1` for models with native `<|fim_prefix|>`, `<|fim_suffix|>`,
-and `<|fim_middle|>` tokens. This lets Tilde complete a partial current word
-and fill text at the exact caret while conditioning on text after it. The live
-Qwen3.5 9B Base setup supports this mode.
-
-## Private telemetry
-
-Set `TILDE_LOG_PATH` to enable a local JSONL flight recorder. Each record is
-written with mode `0600`; the parent directory should be mode `0700`. Logs
-include full textbox/OCR context, exact model requests and responses, latency,
-errors, and suggestion outcomes including word/full acceptance, dismissal,
-typed-over, stale, cancelled, cleared, and reset states. Sensitive input contexts and
-blocked password-manager windows remain excluded by Tilde's existing safety
-gate. The log rotates to `.1` at 50 MiB by default; override the byte limit with
-`TILDE_LOG_MAX_BYTES` (1 MiB to 1 GiB).
-
-Because these records can contain private writing, they stay local and must not
-be committed or uploaded. Generate an agent-readable quality summary with:
-
-```bash
-./scripts/telemetry-report.sh
-```
-
-The current visual experiment renders the continuation with Fcitx's
-`Bold`/active style, directly after the normal caret with no boundary marker.
-
-## Local controls
-
-The user installation includes a small JSON-capable control command for shell
-plugins and diagnostics:
-
-```bash
-tilde-control status --json
-tilde-control enable
-tilde-control disable
-tilde-control warm
-tilde-control restart
-tilde-control doctor
-```
-
-The companion Omarchy plugin uses this interface instead of editing Tilde's
-files directly. Enable and disable are instantaneous and global: a private
-marker under `~/.local/state/tilde/` tells the running addon to pass keys
-through without requesting suggestions. Selecting Tilde in Fcitx remains a
-separate input-method choice.
-
-### Model picker
-
-The control interface exposes a curated local-model catalog for the companion
-Omarchy panel:
-
-```bash
-tilde-control models --json
-tilde-control model install qwen-balanced
-tilde-control model use qwen-smart
-```
-
-Installing a model downloads it through Ollama, warms and validates it, and
-only then changes Tilde's managed user-service drop-ins. A failed service
-switch restores the previous configuration. Qwen profiles enable FIM; Gemma
-profiles use natural continuation. Official Gemma downloads require accepting
-Google's model terms on Hugging Face first.
-
-For this English-layout proof, Tilde commits plain printable keys immediately
-and keeps only its unaccepted continuation in IME preedit. This prevents
-toolkits without formatted-preedit support from styling the user's real text as
-an unfinished composition. Dead-key and composed-layout handling is
-intentionally deferred until the input boundary passes across the initial
-application matrix.
-
-## Validation status
-
-- Build and deterministic key-policy tests pass.
-- Model request serialization, response parsing, output sanitization, and
-  stale-response policy tests pass.
-- Fcitx addon discovery and manual Qt preedit display have been demonstrated.
-- Model-backed inline suggestions have been manually demonstrated in Omawrite
-  with the model fully offloaded to an NVIDIA RTX 3090.
-- Exact Tab acceptance is not yet proven end to end.
-- The GUI runner requires `ydotool`; `wtype` bypasses the Fcitx path and is not
-  a valid input-method test.
-- Apps exposing Fcitx surrounding text provide up to 4 KiB before the caret and
-  1 KiB after it. Other apps use recent Tilde-tracked text as a fallback.
-- Active-window OCR is cached for two seconds and capped at 4 KiB. It sees only
-  rendered content, not hidden/scrolled-off document content or browser DOM.
-  Capture takes about a second, so it runs off the request path: each
-  request uses the latest capture for the current window and schedules a
-  refresh when that capture is stale. The first request in a newly focused
-  window has no OCR context. Telemetry records `ocr_age_ms` per request.
-- Password/sensitive input contexts and known password-manager windows never
-  trigger predictions or OCR.
-
-## Build and install
+## Install on Omarchy
 
 Requirements: Fcitx5 development files, CMake, Ninja, a C++17 compiler,
-libcurl, JsonCpp, and a running Ollama service.
-
-On Omarchy, install the CUDA runtime and pull the default model:
+libcurl, JsonCpp, jq, and a running Ollama service.
 
 ```bash
 omarchy pkg add ollama-cuda
 sudo systemctl enable --now ollama.service
-ollama pull qwen2.5-coder:1.5b-base
-ollama pull qwen2.5:1.5b
-```
-
-```bash
 ./scripts/install-omarchy-user.sh
 ```
 
-The Omarchy installer keeps the addon rootless under `~/.local` and adds that
-directory to the user Fcitx5 service's addon search path. Add **Tilde Linux
-Proof** to the active input-method group and select it. Type in a disposable
-document. Press `Tab` only while the suggestion is visible; press `Esc` to
-dismiss it.
+The installer builds and installs under `~/.local`, adds that directory to
+the user Fcitx5 service's addon search path, downloads the default model if
+none is configured, and restarts Fcitx. Then add **Oma Tab** to your active
+input-method group and select it. `omatab doctor` confirms everything is
+working.
 
-For a system-wide test, copy `packaging/fcitx5-global.conf` to
-`~/.config/fcitx5/config` and restart Fcitx. This shares one input-method state
-across compatible applications: `Ctrl+Space` toggles between Tilde and the
-normal keyboard. Password fields remain excluded.
+For a system-wide setup, copy `packaging/fcitx5-global.conf` to
+`~/.config/fcitx5/config` and restart Fcitx. `Ctrl+Space` then toggles between
+Oma Tab and the plain keyboard in every compatible application.
+
+Upgrading from the early `tilde` proof install: run
+`./scripts/migrate-from-tilde.sh` once. It keeps your model choice and
+telemetry setting, moves the state directory, and leaves a `tilde-control`
+shim for older shell plugins.
+
+## Command line
+
+Everything is controlled through one command. Every reporting command accepts
+`--json`, every command exits non-zero on failure, and `omatab commands
+--json` lists them all, so agents and shell plugins can drive it safely.
+
+```bash
+omatab status            # installation, model, settings, quality summary
+omatab enable            # suggestions on, instantly and globally
+omatab disable           # suggestions off; keys pass straight through
+omatab toggle
+omatab telemetry on|off  # private local suggestion log (default off)
+omatab ocr on|off        # screen-text context capture (default off)
+omatab key full-accept Control+Return   # Tab always accepts one word
+omatab config
+omatab models            # curated local-model catalog
+omatab model install qwen-smart
+omatab model use qwen-fast
+omatab warm              # preload the model
+omatab doctor            # health check, exit 0 only when fully working
+omatab uninstall         # remove Oma Tab; --purge also deletes settings and logs
+```
+
+## Settings
+
+Settings live in `~/.config/fcitx5/conf/omatab.conf`, apply live without a
+restart, and can also be edited in `fcitx5-configtool`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `FullAcceptKey` | `Shift+Tab` | Key that accepts the whole suggestion. `Tab` always accepts one word. |
+| `ScreenContext` | `False` | Read the active window with OCR and give the model that text as background. |
+| `Telemetry` | `False` | Record a private local log of every request and outcome for tuning. |
+
+**Screen context.** When on, Oma Tab screenshots the active window and runs
+OCR about every two seconds while you type, on a background thread. Each
+request uses the latest capture for the current window; a capture older than
+`OMATAB_OCR_MAX_AGE_MS` (default `5000`) is withheld, and switching windows
+discards the previous window's capture. It sees only rendered content, and
+anything overlapping the window, such as a notification, is read too. The
+text is capped at 4 KiB.
+
+**Telemetry.** When on, a JSONL log is written with mode `0600` to
+`~/.local/state/omatab/events.jsonl` (override with `OMATAB_LOG_PATH`). It
+contains full textbox and OCR context, exact model requests and responses,
+latency, and every outcome: shown, word or full acceptance, dismissal,
+typed-over with whether the suggestion had predicted the next character,
+stale, cancelled, cleared, and reset. Because it can contain private writing,
+it stays local and must never be committed or uploaded. It rotates to `.1` at
+50 MiB (`OMATAB_LOG_MAX_BYTES`, 1 MiB to 1 GiB).
+
+```bash
+omatab-telemetry-report
+```
+
+produces a quality summary: acceptance rate, acceptance by window class and
+by OCR age, suggestion length, latency percentiles, cancellation counts, and
+suggestions that look like chat replies rather than continuations.
+
+## Model tuning
+
+Set these in the Fcitx5 service environment (the model picker manages the
+model variables through systemd drop-ins).
+
+| Variable | Default | Range |
+|---|---|---|
+| `OMATAB_MODEL` | balanced Qwen 4B | any Ollama model |
+| `OMATAB_CONTEXT_MODEL` | same as model | used when screen context is present |
+| `OMATAB_FIM` | `1` | `0` for plain-continuation models such as Gemma |
+| `OMATAB_DEBOUNCE_MS` | `120` | 0 to 1000 |
+| `OMATAB_NUM_PREDICT` | `16` | 1 to 64 |
+| `OMATAB_TEMPERATURE` | `0.2` | 0 to 2 |
+| `OMATAB_TOP_P` | `0.9` | 0 to 1 |
+| `OMATAB_NUM_CTX` | `8192` | 1024 to 32768 |
+| `OMATAB_TIMEOUT_MS` | `2500` | 250 to 10000 |
+| `OMATAB_KEEP_ALIVE` | `30m` | `-1` keeps the model resident |
+| `OMATAB_OCR_MAX_AGE_MS` | `5000` | 500 to 60000 |
+
+Invalid values fall back to the defaults. The optional `omatab-model-warm.timer`
+preloads the configured model and refreshes its lease every minute; the
+installer enables it.
+
+## Behavior details
+
+For this English-layout release, Oma Tab commits plain printable keys
+immediately and keeps only its unaccepted continuation in IME preedit, so
+toolkits without formatted-preedit support never style your real text as an
+unfinished composition. Dead-key and composed-layout handling is deferred.
+
+Each word accepted with `Tab` includes one trailing space; the final word also
+adds a trailing space. Pending, failed, timed-out, cancelled, and empty model
+requests show no suggestion, leaving native `Tab` behavior intact.
+
+Suggestions are shown in every application, including terminals. Use
+`omatab disable` or the Omarchy bar plugin to pause them.
 
 ## Safety gate
 
-This proof must not duplicate or lose committed text, consume `Tab` or `Esc`
-without a visible suggestion, break shortcuts, or leave stale preedit in a new
-field. It should be tested in a native GTK/Qt editor, Chromium, and Ghostty
-before expanding document-context capture.
+Oma Tab must not duplicate or lose committed text, consume `Tab`, the
+full-accept key, or `Esc` without a visible suggestion, break shortcuts, or
+leave stale preedit in a new field.
 
-## Test from the start
+## Development
 
 ```bash
-./scripts/test.sh
-./scripts/test-gui.sh
+./scripts/test.sh        # build plus deterministic policy and model tests
+./scripts/test-gui.sh    # human-style GUI lane; requires ydotool
 ```
 
-The proof has deterministic keystroke-policy tests. The committed test design
-also reserves separate lanes for Fcitx integration, human-style GUI automation,
-local-model latency/output checks, and GPT quality review. See
-[`docs/testing.md`](docs/testing.md).
-
-## Planned architecture
-
-1. Fcitx5 owns key routing, inline preedit, and deterministic acceptance.
-2. A single worker debounces typing, captures throttled active-window OCR in
-   memory, and calls Ollama's localhost API without blocking the Fcitx event
-   loop.
-3. Input-context revisions prevent older responses from replacing newer text.
-4. A future context service can add document/window context without changing
-   the acceptance path.
-5. An optional Omarchy shell plugin can expose model status and controls.
+The model tests cover request serialization, response parsing and trimming,
+stale-response policy, in-flight cancellation against a silent local socket,
+and the background OCR provider with an injected slow capture. See
+[`docs/testing.md`](docs/testing.md) for the full test design.
 
 ## License
 

@@ -13,6 +13,6 @@ cmake \
 cmake --build "$build_dir"
 cmake --install "$build_dir"
 
-echo "Installed Tilde Linux Proof for the current user."
+echo "Installed Oma Tab for the current user."
 echo "Fcitx5 must include $HOME/.local/lib/fcitx5 in FCITX_ADDON_DIRS."
 echo "On Omarchy, use scripts/install-omarchy-user.sh to configure and restart it."

@@ -3,36 +3,46 @@
   "scenarios": [
     {
       "id": "accept-next-word",
-      "initial_text": "Tilde",
-      "keys": ["Tab"],
-      "expected_text": "Tilde — Tilde ",
+      "initial_text": "Oma Tab",
+      "keys": [
+        "Tab"
+      ],
+      "expected_text": "Oma Tab \u2014 Oma Tab ",
       "expected_visible_suggestion": "is working"
     },
     {
-      "id": "accept-full-suggestion-with-backtick",
-      "initial_text": "Tilde",
-      "keys": ["grave"],
-      "expected_text": "Tilde — Tilde is working",
+      "id": "accept-full-suggestion-with-shift-tab",
+      "initial_text": "Oma Tab",
+      "keys": [
+        "Shift+Tab"
+      ],
+      "expected_text": "Oma Tab \u2014 Oma Tab is working",
       "expected_visible_suggestion": false
     },
     {
-      "id": "accept-full-suggestion-with-tilde",
-      "initial_text": "Tilde",
-      "keys": ["asciitilde"],
-      "expected_text": "Tilde — Tilde is working",
+      "id": "accept-full-suggestion-with-full-accept-key",
+      "initial_text": "Oma Tab",
+      "keys": [
+        "asciitilde"
+      ],
+      "expected_text": "Oma Tab \u2014 Oma Tab is working",
       "expected_visible_suggestion": false
     },
     {
       "id": "dismiss-inline-suggestion",
-      "initial_text": "Tilde",
-      "keys": ["Escape"],
-      "expected_text": "Tilde",
+      "initial_text": "Oma Tab",
+      "keys": [
+        "Escape"
+      ],
+      "expected_text": "Oma Tab",
       "expected_visible_suggestion": false
     },
     {
       "id": "tab-without-suggestion-is-native",
       "initial_text": "",
-      "keys": ["Tab"],
+      "keys": [
+        "Tab"
+      ],
       "expected_text": "",
       "expected_native_tab": true
     }

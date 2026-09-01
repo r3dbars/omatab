@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-model=${TILDE_MODEL:-qwen2.5-coder:1.5b-base}
-context=${TILDE_NUM_CTX:-8192}
+model=${OMATAB_MODEL:-hf.co/mradermacher/Qwen3.5-4B-Base-GGUF:Q8_0}
+context=${OMATAB_NUM_CTX:-8192}
 endpoint=${OLLAMA_HOST:-http://127.0.0.1:11434}
 payload=$(jq -nc --arg model "$model" --argjson context "$context" '{
   model: $model,
