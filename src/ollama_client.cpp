@@ -126,6 +126,104 @@ std::string buildOllamaRequest(std::string_view model,
     return Json::writeString(writer, request);
 }
 
+namespace {
+
+std::string_view trimView(std::string_view text) {
+    while (!text.empty() &&
+           std::isspace(static_cast<unsigned char>(text.front()))) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() &&
+           std::isspace(static_cast<unsigned char>(text.back()))) {
+        text.remove_suffix(1);
+    }
+    return text;
+}
+
+// Lowercases ASCII and collapses whitespace runs so an OCR line and a model
+// suggestion compare equal despite spacing or case differences.
+std::string foldForComparison(std::string_view text) {
+    std::string folded;
+    folded.reserve(text.size());
+    bool pendingSpace = false;
+    for (unsigned char c : trimView(text)) {
+        if (std::isspace(c)) {
+            pendingSpace = true;
+            continue;
+        }
+        if (pendingSpace) {
+            folded.push_back(' ');
+            pendingSpace = false;
+        }
+        folded.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return folded;
+}
+
+std::size_t wordCount(std::string_view text) {
+    std::size_t words = 0;
+    bool inWord = false;
+    for (unsigned char c : text) {
+        if (std::isspace(c)) {
+            inWord = false;
+        } else if (!inWord) {
+            inWord = true;
+            ++words;
+        }
+    }
+    return words;
+}
+
+} // namespace
+
+std::string suggestionRejection(std::string_view suggestion,
+                                std::string_view visibleContext) {
+    constexpr std::size_t kMinimumLength = 3;
+    constexpr std::size_t kMaximumRun = 5;
+    constexpr std::size_t kEchoMinimumWords = 3;
+
+    const auto trimmed = trimView(suggestion);
+    if (trimmed.size() < kMinimumLength) {
+        return "too_short";
+    }
+    // Any non-ASCII byte counts as content so accented words and emoji pass.
+    const bool hasContent = std::any_of(
+        trimmed.begin(), trimmed.end(), [](unsigned char c) {
+            return c >= 0x80 || std::isalnum(c);
+        });
+    if (!hasContent) {
+        return "no_content";
+    }
+    std::size_t run = 0;
+    char previous = '\0';
+    for (char c : trimmed) {
+        if (c == previous && !std::isspace(static_cast<unsigned char>(c))) {
+            if (++run > kMaximumRun) {
+                return "repeated_run";
+            }
+        } else {
+            run = 1;
+            previous = c;
+        }
+    }
+    if (!visibleContext.empty() && wordCount(trimmed) >= kEchoMinimumWords) {
+        const auto folded = foldForComparison(trimmed);
+        std::size_t start = 0;
+        while (start <= visibleContext.size()) {
+            auto end = visibleContext.find('\n', start);
+            if (end == std::string_view::npos) {
+                end = visibleContext.size();
+            }
+            if (foldForComparison(
+                    visibleContext.substr(start, end - start)) == folded) {
+                return "screen_line_echo";
+            }
+            start = end + 1;
+        }
+    }
+    return {};
+}
+
 std::string buildOllamaContextRequest(std::string_view model,
                                       std::string_view prefix,
                                       std::string_view suffix,

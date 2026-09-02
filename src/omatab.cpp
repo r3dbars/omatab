@@ -390,6 +390,14 @@ public:
                     telemetry_.record(std::move(modelEvent));
                     return;
                 }
+                if (auto reason = omatab::suggestionRejection(
+                        result.suggestion, job.visibleContext);
+                    !reason.empty()) {
+                    modelEvent["outcome"] = "filtered";
+                    modelEvent["filter_reason"] = reason;
+                    telemetry_.record(std::move(modelEvent));
+                    return;
+                }
                 state->remainingSuggestion = std::move(result.suggestion);
                 state->originalSuggestion = state->remainingSuggestion;
                 state->acceptedSuggestion.clear();

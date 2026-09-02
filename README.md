@@ -124,7 +124,7 @@ text is capped at 4 KiB.
 contains full textbox and OCR context, exact model requests and responses,
 latency, and every outcome: shown, word or full acceptance, dismissal,
 typed-over with whether the suggestion had predicted the next character,
-stale, cancelled, cleared, and reset. Because it can contain private writing,
+stale, cancelled, filtered (with the reason), cleared, and reset. Because it can contain private writing,
 it stays local and must never be committed or uploaded. It rotates to `.1` at
 50 MiB (`OMATAB_LOG_MAX_BYTES`, 1 MiB to 1 GiB).
 
@@ -169,6 +169,12 @@ unfinished composition. Dead-key and composed-layout handling is deferred.
 Each word accepted with `Tab` includes one trailing space; the final word also
 adds a trailing space. Pending, failed, timed-out, cancelled, and empty model
 requests show no suggestion, leaving native `Tab` behavior intact.
+
+A final filter drops suggestions that are not worth a keypress: under three
+characters, punctuation only, a character repeated six or more times, or a
+verbatim copy of a whole line of the screen such as a status bar. Reusing a
+phrase from the screen is allowed on purpose, so a reply can echo the
+question it answers.
 
 Suggestions are shown in every application, including terminals. Use
 `omatab disable` or the Omarchy bar plugin to pause them.

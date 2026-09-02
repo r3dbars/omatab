@@ -32,6 +32,10 @@ jq -s '
     stale_count: (model_results | map(select(.outcome == "stale")) | length),
     cancelled_count: (model_results | map(select(.outcome == "cancelled")) | length),
     error_count: (model_results | map(select(.outcome == "request_error")) | length),
+    filtered_count: (model_results | map(select(.outcome == "filtered")) | length),
+    filtered_by_reason: (model_results | map(select(.outcome == "filtered")) |
+      group_by(.filter_reason) | map({reason: .[0].filter_reason, count: length}) |
+      sort_by(-.count)),
     accepted_request_count: ($accepted | length),
     acceptance_rate: (if ($shown | length) == 0 then null
                       else (($accepted | length) / ($shown | length)) end),

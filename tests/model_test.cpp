@@ -227,6 +227,39 @@ int main() {
     expect(omatab::limitToClause(".") == ".",
            "bare sentence end is a valid suggestion");
 
+    const std::string screen =
+        "Alex: Hey, do you want to meet at seven?\n"
+        "auto mode on (shift+tab to cycle)\n"
+        "90t-5.6-501 medium fast - ~/Work\n";
+    expect(omatab::suggestionRejection(" I would like to meet at seven",
+                                       screen)
+               .empty(),
+           "reusing a phrase from the screen is allowed");
+    expect(omatab::suggestionRejection(" Sure, seven works for me", screen)
+               .empty(),
+           "ordinary reply passes the filter");
+    expect(omatab::suggestionRejection(" is working now.", "") .empty(),
+           "suggestion passes without screen context");
+    expect(omatab::suggestionRejection(" e", screen) == "too_short",
+           "single character suggestion is rejected");
+    expect(omatab::suggestionRejection("?", screen) == "too_short",
+           "lone punctuation is rejected");
+    expect(omatab::suggestionRejection(" ...!", screen) == "no_content",
+           "punctuation-only suggestion is rejected");
+    expect(omatab::suggestionRejection(" 2222222222222222", screen) ==
+               "repeated_run",
+           "repeated character run is rejected");
+    expect(omatab::suggestionRejection(" auto mode on (shift+tab to cycle)",
+                                       screen) == "screen_line_echo",
+           "copy of a whole screen line is rejected");
+    expect(omatab::suggestionRejection("  90T-5.6-501   medium fast - ~/Work ",
+                                       screen) == "screen_line_echo",
+           "screen line echo ignores case and spacing");
+    expect(omatab::suggestionRejection(" ~/Work", screen).empty(),
+           "short fragment matching a screen line is allowed");
+    expect(omatab::suggestionRejection(" caf\xC3\xA9", screen).empty(),
+           "non-ASCII text counts as content");
+
     const auto structured = omatab::buildContextWindow(
         "Earlier text. Cursor here. Later text.", 26, true, "fallback", 4096,
         1024);

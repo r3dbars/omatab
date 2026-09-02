@@ -34,6 +34,16 @@ std::string sanitizeSuggestion(std::string suggestion);
 // and abbreviations intact by requiring whitespace or end of text after the
 // mark.
 std::string limitToClause(std::string suggestion);
+// Last check before a suggestion is shown. Returns an empty string when the
+// suggestion is worth showing, otherwise a short reason: "too_short" (under
+// three characters), "no_content" (no letters or digits), "repeated_run"
+// (the same character six or more times in a row), or "screen_line_echo"
+// (a copy of an entire line of the visible screen, three words or longer).
+// Reusing a phrase from the screen is deliberately allowed: replying "I
+// would like to meet at seven" to "do you want to meet at seven?" is the
+// point of screen context.
+std::string suggestionRejection(std::string_view suggestion,
+                                std::string_view visibleContext);
 std::string buildOllamaContextRequest(std::string_view model,
                                       std::string_view prefix,
                                       std::string_view suffix,
