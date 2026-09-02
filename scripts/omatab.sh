@@ -704,7 +704,7 @@ case "$command" in
     source_dir=$(cat "$state_dir/source_dir" 2>/dev/null || true)
     [[ -n $source_dir ]] || source_dir=$HOME/.local/src/omatab
     if [[ ! -f $source_dir/scripts/bootstrap.sh ]]; then
-      echo "Source checkout not found at $source_dir; clone https://github.com/r3dbars/tilde-linux there first." >&2
+      echo "Source checkout not found at $source_dir; clone https://github.com/r3dbars/omatab there first." >&2
       exit 3
     fi
     if [[ -d $source_dir/.git ]]; then

@@ -43,7 +43,7 @@ in the bar, and press **Install Oma Tab**. It opens a terminal you can watch.
 The same thing from a shell:
 
 ```bash
-git clone https://github.com/r3dbars/tilde-linux ~/.local/src/omatab
+git clone https://github.com/r3dbars/omatab ~/.local/src/omatab
 ~/.local/src/omatab/scripts/bootstrap.sh
 ```
 
