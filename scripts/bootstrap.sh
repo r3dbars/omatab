@@ -204,6 +204,13 @@ if [[ ! -f $global_config ]]; then
   install -m 644 "$project_dir/packaging/fcitx5-global.conf" "$global_config"
 fi
 systemctl --user start "$fcitx_service"
+# Input contexts created while Fcitx was still loading can come up on the
+# plain keyboard even though the profile says Oma Tab; switch them over.
+for _ in $(seq 1 20); do
+  busctl --user --quiet status org.fcitx.Fcitx5 >/dev/null 2>&1 && break
+  sleep 0.5
+done
+fcitx5-remote -s omatab >/dev/null 2>&1 || true
 
 # ---- 5. model ----
 
