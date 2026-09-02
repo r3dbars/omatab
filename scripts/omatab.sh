@@ -38,9 +38,10 @@ Commands:
   models [--json]         List supported model choices
   model install ID        Download, verify, and use a supported model
   model use ID            Use an already-downloaded supported model
+  model verify ID         Check a downloaded model against its pinned digest
   doctor [--json]         Health check; exit 0 only when fully working
   demo [--port N]         Open the local playground page for trying it out
-  update                  Pull the latest source and rebuild, in place
+  update                  Rebuild the source already checked out here
   uninstall [--purge]     Remove Oma Tab from this user account
                           (--purge also deletes settings and the telemetry log)
   commands [--json]       List commands for agents and shell completion
@@ -63,10 +64,10 @@ commands_json() {
     {command: "warm", args: [], mutates: false, description: "Warm the configured model"},
     {command: "restart", args: [], mutates: true, description: "Restart the Fcitx service"},
     {command: "models", args: ["--json"], mutates: false, description: "List supported model choices"},
-    {command: "model", args: ["install|use", "ID"], mutates: true, description: "Download and/or switch to a supported model"},
+    {command: "model", args: ["install|use|verify", "ID"], mutates: true, description: "Download, switch to, or digest-check a supported model"},
     {command: "doctor", args: ["--json"], mutates: false, description: "Health check with non-zero exit on problems"},
     {command: "demo", args: ["--port N", "--no-open"], mutates: false, description: "Serve the local playground page on loopback and open it"},
-    {command: "update", args: [], mutates: true, description: "Pull the latest source and rebuild in place"},
+    {command: "update", args: [], mutates: true, description: "Rebuild the checked-out source in place"},
     {command: "uninstall", args: ["--purge", "--json"], mutates: true, description: "Remove Oma Tab from this user account"},
     {command: "commands", args: ["--json"], mutates: false, description: "This list"}
   ]'
@@ -263,70 +264,82 @@ uninstall_omatab() {
 }
 
 model_catalog() {
+  # Every model is pinned to the sha256 of its Ollama manifest, which is the
+  # digest /api/tags reports for a downloaded model. `omatab model verify`
+  # checks a download against this pin before the model is ever loaded, so a
+  # tag that moves on the registry fails loudly instead of quietly replacing
+  # what was reviewed. scripts/pin-models.sh re-derives these values from the
+  # registry, so anyone can check them without downloading the weights.
   cat <<'JSON'
 [
   {
     "id": "qwen-fast",
-    "label": "Qwen Fast · 2B",
+    "label": "Qwen Fast \u00b7 2B",
     "family": "Qwen 3.5 Base",
     "model": "hf.co/mradermacher/Qwen3.5-2B-Base-GGUF:Q8_0",
-    "download_gb": 2.1,
+    "digest": "d5fc0073e9f1ca27ddc6a2f35da5ddd40e36a00dfa946eaac95addb6e6f059bd",
+    "download_gb": 2.4,
     "fim": true,
     "requires_terms": false,
     "description": "Fast everyday completion for modest GPUs."
   },
   {
     "id": "qwen-balanced",
-    "label": "Qwen Balanced · 4B",
+    "label": "Qwen Balanced \u00b7 4B",
     "family": "Qwen 3.5 Base",
     "model": "hf.co/mradermacher/Qwen3.5-4B-Base-GGUF:Q8_0",
-    "download_gb": 4.3,
+    "digest": "8909598d492d99cf8ae06cfc8b4cc12389e04cb212b2007952be493516670c66",
+    "download_gb": 4.8,
     "fim": true,
     "requires_terms": false,
     "description": "A strong balance of speed and writing quality."
   },
   {
     "id": "qwen-smart",
-    "label": "Qwen Smart · 9B",
+    "label": "Qwen Smart \u00b7 9B",
     "family": "Qwen 3.5 Base",
     "model": "hf.co/mradermacher/Qwen3.5-9B-Base-GGUF:Q8_0",
-    "download_gb": 9.2,
+    "digest": "b47d3921118be681cf1ea268cf289ba57e6fb646ea086ce1e6a45f4f7e369ff8",
+    "download_gb": 10.2,
     "fim": true,
     "requires_terms": false,
     "description": "Highest-quality recommended Qwen model."
-  },
-  {
-    "id": "gemma-tiny",
-    "label": "Gemma Tiny · 1B",
-    "family": "Gemma 3 Pretrained",
-    "model": "hf.co/google/gemma-3-1b-pt-qat-q4_0-gguf",
-    "download_gb": 1.0,
-    "fim": false,
-    "requires_terms": true,
-    "description": "Very light prose completion from Google."
-  },
-  {
-    "id": "gemma-balanced",
-    "label": "Gemma Balanced · 4B",
-    "family": "Gemma 3 Pretrained",
-    "model": "hf.co/google/gemma-3-4b-pt-qat-q4_0-gguf",
-    "download_gb": 3.3,
-    "fim": false,
-    "requires_terms": true,
-    "description": "Natural prose completion for everyday writing."
-  },
-  {
-    "id": "gemma-smart",
-    "label": "Gemma Smart · 12B",
-    "family": "Gemma 3 Pretrained",
-    "model": "hf.co/google/gemma-3-12b-pt-qat-q4_0-gguf",
-    "download_gb": 8.1,
-    "fim": false,
-    "requires_terms": true,
-    "description": "Larger prose model for higher-end GPUs."
   }
 ]
 JSON
+}
+
+# Fails unless the downloaded model matches the digest pinned in the catalog.
+# Called before anything loads a model into Ollama, and after every download.
+verify_model_digest() {
+  local id=$1
+  local record model expected actual
+  record=$(model_record "$id") || return 2
+  model=$(jq -r '.model' <<<"$record")
+  expected=$(jq -r '.digest // ""' <<<"$record")
+  if [[ ! $expected =~ ^[0-9a-f]{64}$ ]]; then
+    echo "No pinned digest for $id; refusing to load it." >&2
+    return 6
+  fi
+
+  actual=$(curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags 2>/dev/null |
+    jq -r --arg model "$model" '
+      def normalized: sub(":latest$"; "");
+      (.models // []) | map(select(((.name // .model // "") | normalized) ==
+        ($model | normalized))) | first | .digest // ""' 2>/dev/null || true)
+  actual=${actual#sha256:}
+
+  if [[ -z $actual ]]; then
+    echo "Model $model is not downloaded, so its digest cannot be checked." >&2
+    return 3
+  fi
+  if [[ $actual != "$expected" ]]; then
+    echo "Model $model does not match the digest Oma Tab pinned for it." >&2
+    echo "  expected sha256:$expected" >&2
+    echo "  found    sha256:$actual" >&2
+    echo "Remove it with 'ollama rm $model' and reinstall, or report this." >&2
+    return 6
+  fi
 }
 
 model_record() {
@@ -522,6 +535,8 @@ use_model() {
     echo "Model is not downloaded: $id" >&2
     return 3
   fi
+  # Nothing reaches the long-lived Ollama runtime without matching its pin.
+  verify_model_digest "$id" || return 6
 
   warm_selected_model "$model" "$fim"
   fcitx_backup=$(mktemp)
@@ -569,13 +584,18 @@ install_model() {
   record=$(model_record "$id")
   model=$(jq -r '.model' <<<"$record")
 
+  local pulled=false
   if ! ollama show "$model" >/dev/null 2>&1; then
-    if ! ollama pull "$model" >/dev/null; then
-      if [[ $(jq -r '.requires_terms' <<<"$record") == true ]]; then
-        echo "Gemma download needs the Google model terms accepted on Hugging Face." >&2
-      fi
-      return 4
+    ollama pull "$model" >/dev/null || return 4
+    pulled=true
+  fi
+  if ! verify_model_digest "$id"; then
+    # A fresh download that does not match its pin never stays on disk.
+    if [[ $pulled == true ]]; then
+      ollama rm "$model" >/dev/null 2>&1 || true
+      echo "Deleted the download that did not match its pinned digest." >&2
     fi
+    return 6
   fi
   use_model "$id"
 }
@@ -687,6 +707,10 @@ case "$command" in
     case "$action" in
       install) install_model "$id" ;;
       use) use_model "$id" ;;
+      verify)
+        verify_model_digest "$id"
+        printf 'Model for %s matches its pinned digest.\n' "$id"
+        ;;
       *) usage >&2; exit 2 ;;
     esac
     ;;
@@ -707,16 +731,14 @@ case "$command" in
       echo "Source checkout not found at $source_dir; clone https://github.com/r3dbars/omatab there first." >&2
       exit 3
     fi
+    # This rebuilds the source that is already here and never fetches new
+    # code. A newer Oma Tab arrives only through the Omarchy widget's Update
+    # button, which checks out the commit that widget release pins.
     if [[ -d $source_dir/.git ]]; then
-      if git -C "$source_dir" symbolic-ref -q HEAD >/dev/null; then
-        git -C "$source_dir" pull --ff-only
-      else
-        # Detached: the Omarchy widget pinned this commit. Rebuild it as
-        # is; a newer Oma Tab arrives with the next widget release.
-        echo "Source is pinned at $(git -C "$source_dir" rev-parse --short HEAD) by the Oma Tab widget; rebuilding that version."
-      fi
+      echo "Rebuilding the checkout at $(git -C "$source_dir" rev-parse --short HEAD 2>/dev/null || echo "$source_dir")."
+      echo "Use the Oma Tab widget's Update button to move to a newer version."
     fi
-    exec "$source_dir/scripts/bootstrap.sh"
+    exec bash -- "$source_dir/scripts/bootstrap.sh"
     ;;
   demo)
     demo_dir=$HOME/.local/share/omatab/demo

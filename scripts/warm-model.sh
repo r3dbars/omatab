@@ -26,6 +26,29 @@ if ! curl --fail --silent --max-time 10 --request POST "$endpoint/api/show" \
   exit 0
 fi
 
+# The warm timer is the other place a model enters Ollama's long-lived
+# runtime, so it checks the same pin the installer checked. A model somebody
+# configured by hand is not in the catalog and is left alone.
+omatab_bin=$HOME/.local/bin/omatab
+if [[ -x $omatab_bin ]]; then
+  model_id=$("$omatab_bin" models --json 2>/dev/null |
+    jq -r --arg model "$model" '
+      def normalized: sub(":latest$"; "");
+      map(select(((.model // "") | normalized) == ($model | normalized))) |
+      first | .id // ""' 2>/dev/null || true)
+  if [[ -n $model_id ]]; then
+    verify_status=0
+    "$omatab_bin" model verify "$model_id" >/dev/null || verify_status=$?
+    # 6 is a digest mismatch, the one answer that must stop the load. Any
+    # other failure means the check could not run; the model was already
+    # verified when it was installed, so warming continues.
+    if ((verify_status == 6)); then
+      echo "Not warming $model: it no longer matches its pinned digest." >&2
+      exit 1
+    fi
+  fi
+fi
+
 payload=$(jq -nc --arg model "$model" --argjson context "$context" '{
   model: $model,
   prompt: "",

@@ -67,7 +67,7 @@ Json::Value configuredKeepAlive() {
 }
 
 // FIM is on by default because the default model supports it. Set
-// OMATAB_FIM=0 for plain-continuation models such as Gemma.
+// OMATAB_FIM=0 for models without fill-in-the-middle tokens.
 bool configuredFim() {
     const auto *value = std::getenv("OMATAB_FIM");
     if (!value || !*value) {

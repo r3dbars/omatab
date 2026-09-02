@@ -11,14 +11,4 @@ systemctl --user daemon-reload
 systemctl --user enable --now omatab-model-warm.timer
 systemctl --user restart omarchy-fcitx5.service
 
-default_model=hf.co/mradermacher/Qwen3.5-4B-Base-GGUF:Q8_0
-configured_model=$(systemctl --user show omarchy-fcitx5.service --property=Environment --value 2>/dev/null |
-  tr ' ' '\n' | sed -n 's/^OMATAB_MODEL=//p' | tail -n 1)
-if [[ -z ${OMATAB_SKIP_MODEL_PULL:-} && -z $configured_model ]] && command -v ollama >/dev/null; then
-  if ! ollama show "$default_model" >/dev/null 2>&1; then
-    echo "Downloading the default model ($default_model, about 4.3 GB)..."
-    ollama pull "$default_model" || echo "Model download failed; run 'omatab model install qwen-balanced' later." >&2
-  fi
-fi
-
 echo "Restarted Omarchy's Fcitx5 service with the user-local addon path."

@@ -29,10 +29,15 @@ as an Fcitx5 input method and tuned for Omarchy.
   never trigger predictions or capture.
 
 The default model is the balanced profile, `Qwen3.5-4B-Base` at Q8_0 through
-Ollama (about 4.3 GB). It uses native fill-in-the-middle tokens, so Oma Tab
-can complete a partial word and condition on text after the caret. Faster and
-smarter Qwen profiles and Gemma profiles are available through the model
-picker.
+Ollama (about 4.8 GB). It uses native fill-in-the-middle tokens, so Oma Tab
+can complete a partial word and condition on text after the caret. A faster 2B
+and a smarter 9B profile are available through the model picker.
+
+Every model in the catalog is pinned to the sha256 of its Ollama manifest.
+Downloads are checked against that pin before anything is loaded, so a tag
+that moves on the registry fails loudly instead of quietly swapping the model.
+`scripts/pin-models.sh --check` re-derives every pin from the registry without
+downloading any weights.
 
 ## Install on Omarchy
 
@@ -159,7 +164,7 @@ model variables through systemd drop-ins).
 |---|---|---|
 | `OMATAB_MODEL` | balanced Qwen 4B | any Ollama model |
 | `OMATAB_CONTEXT_MODEL` | same as model | used when screen context is present |
-| `OMATAB_FIM` | `1` | `0` for plain-continuation models such as Gemma |
+| `OMATAB_FIM` | `1` | `0` for models without fill-in-the-middle tokens |
 | `OMATAB_DEBOUNCE_MS` | `120` | 0 to 1000 |
 | `OMATAB_NUM_PREDICT` | `16` | 1 to 64 |
 | `OMATAB_TEMPERATURE` | `0.2` | 0 to 2 |

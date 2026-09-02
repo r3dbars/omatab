@@ -151,8 +151,10 @@ install -Dm644 "$project_dir/packaging/dbus/org.fcitx.Fcitx5.service" \
 busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
   org.freedesktop.DBus ReloadConfig >/dev/null 2>&1 || true
 
-OMATAB_SKIP_MODEL_PULL=1 "$project_dir/scripts/install-omarchy-user.sh"
-printf '%s\n' "$project_dir" >"$source_file"
+"$project_dir/scripts/install-omarchy-user.sh"
+# install.sh builds in a throwaway directory and moves the verified tree into
+# place afterwards, so record where the source will live, not where it is now.
+printf '%s\n' "${OMATAB_SOURCE_HOME:-$project_dir}" >"$source_file"
 
 # ---- 4. Fcitx wiring ----
 # Fcitx rewrites its profile on exit, so stop it, edit, then start.
@@ -244,6 +246,10 @@ if ! ollama show "$model_name" >/dev/null 2>&1; then
   stage model "Downloading $model_label ($model_gb GB)"
   ollama pull "$model_name"
 fi
+# Check the bytes against the digest pinned in the catalog before anything
+# loads them. A moved tag on the registry stops setup here.
+stage model "Checking $model_label against its pinned digest"
+"$omatab_bin" model verify "$model_id"
 stage model "Warming up $model_label"
 "$omatab_bin" model install "$model_id"
 
