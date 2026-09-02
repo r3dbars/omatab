@@ -24,6 +24,7 @@ output, and every command exits non-zero on failure.
 
 Commands:
   status [--json]         Installation, model, settings, and quality status
+         [--brief]        (--brief skips the quality report and model list)
   enable | disable        Turn suggestions on or off globally, instantly
   toggle                  Flip suggestions on or off
   telemetry [on|off]      Show or set the private local suggestion log
@@ -51,7 +52,7 @@ EOF
 
 commands_json() {
   jq -nc '[
-    {command: "status", args: ["--json"], mutates: false, description: "Installation, model, settings, and quality status"},
+    {command: "status", args: ["--json", "--brief"], mutates: false, description: "Installation, model, settings, and quality status; --brief skips the report and model list"},
     {command: "enable", args: [], mutates: true, description: "Turn suggestions on globally"},
     {command: "disable", args: [], mutates: true, description: "Turn suggestions off globally"},
     {command: "toggle", args: [], mutates: true, description: "Flip suggestions on or off"},
@@ -371,7 +372,10 @@ setup_progress_json() {
     printf 'null'
 }
 
+# status_json [brief]: "brief" skips the telemetry report and model catalog,
+# which are the expensive parts, so a bar widget can poll it cheaply.
 status_json() {
+  local brief=${1:-}
   local environment model context input_state input_name service_state timer_state
   local installed=false enabled=true active_input=false telemetry_enabled=false
   local ollama_json='{"models":[]}' telemetry_json='{}' catalog='[]'
@@ -400,13 +404,15 @@ status_json() {
   timer_state=$(systemctl --user is-active "$warm_timer" 2>/dev/null || true)
 
   ollama_json=$(curl -fsS --max-time 1 http://127.0.0.1:11434/api/ps 2>/dev/null || printf '{"models":[]}')
-  catalog=$(models_json "$model")
+  if [[ $brief != brief ]]; then
+    catalog=$(models_json "$model")
+  fi
 
   setup_json=$(setup_progress_json)
   source_dir=$(cat "$state_dir/source_dir" 2>/dev/null || true)
 
   telemetry_enabled=$(config_bool Telemetry false)
-  if [[ -s $log_path ]]; then
+  if [[ $brief != brief && -s $log_path ]]; then
     telemetry_json=$(omatab-telemetry-report "$log_path" 2>/dev/null || printf '{}')
   fi
 
@@ -604,8 +610,16 @@ mkdir -p -m 700 "$state_dir"
 
 case "$command" in
   status)
-    status=$(status_json)
-    if [[ ${1:-} == --json ]]; then
+    brief=
+    json=false
+    for arg in "$@"; do
+      case "$arg" in
+        --brief) brief=brief ;;
+        --json) json=true ;;
+      esac
+    done
+    status=$(status_json "$brief")
+    if [[ $json == true ]]; then
       printf '%s\n' "$status"
     else
       show_status "$status"
