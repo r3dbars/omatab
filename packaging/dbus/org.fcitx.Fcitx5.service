@@ -1,0 +1,9 @@
+# Installed to ~/.local/share/dbus-1/services/ by scripts/bootstrap.sh.
+# When an application asks D-Bus for Fcitx while it is restarting, D-Bus
+# would otherwise launch a bare /usr/bin/fcitx5 that lacks the Oma Tab addon
+# path, steals the bus name, and rewrites the profile without Oma Tab. This
+# override makes activation start Omarchy's own Fcitx unit instead.
+[D-BUS Service]
+Name=org.fcitx.Fcitx5
+Exec=/usr/bin/fcitx5
+SystemdService=omarchy-fcitx5.service

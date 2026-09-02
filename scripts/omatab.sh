@@ -105,6 +105,9 @@ config_bool() {
 }
 
 reload_addon_config() {
+  # Never talk to the bus when Fcitx is away: that would auto-launch a bare
+  # fcitx5 without the addon path.
+  fcitx_bus_available || return 0
   fcitx_bus_available || return 0
   busctl --user call org.fcitx.Fcitx5 /controller org.fcitx.Fcitx.Controller1 \
     ReloadAddonConfig s omatab >/dev/null 2>&1 || true
@@ -223,6 +226,7 @@ uninstall_omatab() {
     "$HOME/.local/libexec/omatab-warm-model"
     "$HOME/.local/share/systemd/user/omatab-model-warm.service"
     "$HOME/.local/share/systemd/user/omatab-model-warm.timer"
+    "${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services/org.fcitx.Fcitx5.service"
     "$addon_dropin"
     "$fcitx_model_dropin"
     "$warm_dropin_dir"

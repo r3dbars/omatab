@@ -37,7 +37,7 @@ picker.
 ## Install on Omarchy
 
 The easy way is the bar widget. Add the
-[Oma Tab plugin](https://github.com/r3dbars/omarchy-omatab), click the `~`
+[Oma Tab plugin](https://github.com/r3dbars/omarchy-omatab), click the `⇥`
 in the bar, and press **Install Oma Tab**. It opens a terminal you can watch.
 
 The same thing from a shell:
@@ -56,6 +56,11 @@ balanced 4B model with 7 GB or more of video memory, the fast 2B model
 otherwise. Pass `--model ID` to choose yourself. It writes its progress to
 `~/.local/state/omatab/setup.json` so the bar widget can show it, and it is
 safe to rerun; `omatab update` pulls the latest source and reruns it.
+
+It also installs a user-level D-Bus service file that points Fcitx
+activation at Omarchy's Fcitx unit. Without it, any application asking for
+Fcitx during a restart makes D-Bus launch a bare fcitx5 that lacks the addon
+path, holds the bus name, and saves a profile without Oma Tab.
 
 `omatab doctor` confirms everything is working.
 

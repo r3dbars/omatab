@@ -142,6 +142,15 @@ curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 ||
 # ---- 3. build and install ----
 
 stage build "Building Oma Tab"
+# Applications ask D-Bus for Fcitx whenever it is away, and D-Bus would
+# launch a bare fcitx5 without the addon path that then holds the bus name
+# and rewrites the profile without Oma Tab. Route activation to the unit
+# before the first restart below opens that window.
+install -Dm644 "$project_dir/packaging/dbus/org.fcitx.Fcitx5.service" \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services/org.fcitx.Fcitx5.service"
+busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+  org.freedesktop.DBus ReloadConfig >/dev/null 2>&1 || true
+
 OMATAB_SKIP_MODEL_PULL=1 "$project_dir/scripts/install-omarchy-user.sh"
 printf '%s\n' "$project_dir" >"$source_file"
 
@@ -152,7 +161,16 @@ stage fcitx "Selecting Oma Tab as the input method"
 profile=$config_home/fcitx5/profile
 global_config=$config_home/fcitx5/config
 mkdir -p "$config_home/fcitx5"
+
 systemctl --user stop "$fcitx_service" >/dev/null 2>&1 || true
+# Any fcitx5 left outside the unit is one of those strays; stop it too.
+for pid in $(pgrep -x fcitx5 || true); do
+  unit=$(tail -1 "/proc/$pid/cgroup" 2>/dev/null | sed 's|.*/||')
+  if [[ $unit != "$fcitx_service" ]]; then
+    systemctl --user stop "$unit" >/dev/null 2>&1 || kill "$pid" 2>/dev/null || true
+  fi
+done
+sleep 1
 if [[ ! -f $profile ]]; then
   cat >"$profile" <<'EOF'
 [Groups/0]
