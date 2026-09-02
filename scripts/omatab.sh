@@ -39,6 +39,7 @@ Commands:
   model use ID            Use an already-downloaded supported model
   doctor [--json]         Health check; exit 0 only when fully working
   demo [--port N]         Open the local playground page for trying it out
+  update                  Pull the latest source and rebuild, in place
   uninstall [--purge]     Remove Oma Tab from this user account
                           (--purge also deletes settings and the telemetry log)
   commands [--json]       List commands for agents and shell completion
@@ -64,6 +65,7 @@ commands_json() {
     {command: "model", args: ["install|use", "ID"], mutates: true, description: "Download and/or switch to a supported model"},
     {command: "doctor", args: ["--json"], mutates: false, description: "Health check with non-zero exit on problems"},
     {command: "demo", args: ["--port N", "--no-open"], mutates: false, description: "Serve the local playground page on loopback and open it"},
+    {command: "update", args: [], mutates: true, description: "Pull the latest source and rebuild in place"},
     {command: "uninstall", args: ["--purge", "--json"], mutates: true, description: "Remove Oma Tab from this user account"},
     {command: "commands", args: ["--json"], mutates: false, description: "This list"}
   ]'
@@ -352,6 +354,19 @@ input_method_name() {
   fcitx5-remote -n 2>/dev/null || true
 }
 
+# The bootstrap script records its current stage; "running" is true only
+# while that script is still alive, so a stale file never shows as progress.
+setup_progress_json() {
+  local file=$state_dir/setup.json pid running=false
+  [[ -s $file ]] || { printf 'null'; return; }
+  pid=$(jq -r '.pid // 0' "$file" 2>/dev/null || echo 0)
+  if [[ $pid =~ ^[0-9]+$ ]] && ((pid > 0)) && kill -0 "$pid" 2>/dev/null; then
+    running=true
+  fi
+  jq -c --argjson running "$running" '{stage, detail, updated, running: $running}' "$file" 2>/dev/null ||
+    printf 'null'
+}
+
 status_json() {
   local environment model context input_state input_name service_state timer_state
   local installed=false enabled=true active_input=false telemetry_enabled=false
@@ -383,6 +398,9 @@ status_json() {
   ollama_json=$(curl -fsS --max-time 1 http://127.0.0.1:11434/api/ps 2>/dev/null || printf '{"models":[]}')
   catalog=$(models_json "$model")
 
+  setup_json=$(setup_progress_json)
+  source_dir=$(cat "$state_dir/source_dir" 2>/dev/null || true)
+
   telemetry_enabled=$(config_bool Telemetry false)
   if [[ -s $log_path ]]; then
     telemetry_json=$(omatab-telemetry-report "$log_path" 2>/dev/null || printf '{}')
@@ -402,7 +420,9 @@ status_json() {
     --argjson ollama "$ollama_json" \
     --argjson models "$catalog" \
     --argjson telemetry "$telemetry_json" \
-    --argjson settings "$(config_json)" '
+    --argjson settings "$(config_json)" \
+    --argjson setup "$setup_json" \
+    --arg sourceDir "$source_dir" '
       ($ollama.models // [] | map(select((.name // .model // "") == $model)) | first // null) as $loaded |
       {
         installed: $installed,
@@ -421,7 +441,9 @@ status_json() {
         settings: $settings,
         telemetry_enabled: $telemetryEnabled,
         telemetry_log: $logPath,
-        telemetry: $telemetry
+        telemetry: $telemetry,
+        setup: $setup,
+        source_dir: (if $sourceDir == "" then null else $sourceDir end)
       }'
 }
 
@@ -659,6 +681,18 @@ case "$command" in
       show_status "$status"
     fi
     jq -e '.healthy' <<<"$healthy" >/dev/null
+    ;;
+  update)
+    source_dir=$(cat "$state_dir/source_dir" 2>/dev/null || true)
+    [[ -n $source_dir ]] || source_dir=$HOME/.local/src/omatab
+    if [[ ! -f $source_dir/scripts/bootstrap.sh ]]; then
+      echo "Source checkout not found at $source_dir; clone https://github.com/r3dbars/tilde-linux there first." >&2
+      exit 3
+    fi
+    if [[ -d $source_dir/.git ]]; then
+      git -C "$source_dir" pull --ff-only
+    fi
+    exec "$source_dir/scripts/bootstrap.sh"
     ;;
   demo)
     demo_dir=$HOME/.local/share/omatab/demo

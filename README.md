@@ -36,20 +36,28 @@ picker.
 
 ## Install on Omarchy
 
-Requirements: Fcitx5 development files, CMake, Ninja, a C++17 compiler,
-libcurl, JsonCpp, jq, and a running Ollama service.
+The easy way is the bar widget. Add the
+[Oma Tab plugin](https://github.com/r3dbars/omarchy-omatab), click the `~`
+in the bar, and press **Install Oma Tab**. It opens a terminal you can watch.
+
+The same thing from a shell:
 
 ```bash
-omarchy pkg add ollama-cuda
-sudo systemctl enable --now ollama.service
-./scripts/install-omarchy-user.sh
+git clone https://github.com/r3dbars/tilde-linux ~/.local/src/omatab
+~/.local/src/omatab/scripts/bootstrap.sh
 ```
 
-The installer builds and installs under `~/.local`, adds that directory to
-the user Fcitx5 service's addon search path, downloads the default model if
-none is configured, and restarts Fcitx. Then add **Oma Tab** to your active
-input-method group and select it. `omatab doctor` confirms everything is
-working.
+The bootstrap installs the packages it needs (Fcitx5, CMake, Ninja, a C++
+compiler, libcurl, JsonCpp, jq, Tesseract, grim, and the Ollama build that
+matches your GPU), starts Ollama, builds and installs under `~/.local`, adds
+that directory to the user Fcitx5 service's addon search path, selects Oma
+Tab as the input method, and downloads a model sized to your GPU: the
+balanced 4B model with 7 GB or more of video memory, the fast 2B model
+otherwise. Pass `--model ID` to choose yourself. It writes its progress to
+`~/.local/state/omatab/setup.json` so the bar widget can show it, and it is
+safe to rerun; `omatab update` pulls the latest source and reruns it.
+
+`omatab doctor` confirms everything is working.
 
 For a system-wide setup, copy `packaging/fcitx5-global.conf` to
 `~/.config/fcitx5/config` and restart Fcitx. `Ctrl+Space` then toggles between
@@ -81,6 +89,7 @@ omatab model use qwen-fast
 omatab warm              # preload the model
 omatab doctor            # health check, exit 0 only when fully working
 omatab demo              # local playground page for trying it out
+omatab update            # pull the latest source and rebuild in place
 omatab uninstall         # remove Oma Tab; --purge also deletes settings and logs
 ```
 

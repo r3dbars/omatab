@@ -22,4 +22,3 @@ if [[ -z ${OMATAB_SKIP_MODEL_PULL:-} && -z $configured_model ]] && command -v ol
 fi
 
 echo "Restarted Omarchy's Fcitx5 service with the user-local addon path."
-echo "Add 'Oma Tab' to your Fcitx input-method group, then run: omatab doctor"
