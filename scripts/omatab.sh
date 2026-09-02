@@ -708,7 +708,13 @@ case "$command" in
       exit 3
     fi
     if [[ -d $source_dir/.git ]]; then
-      git -C "$source_dir" pull --ff-only
+      if git -C "$source_dir" symbolic-ref -q HEAD >/dev/null; then
+        git -C "$source_dir" pull --ff-only
+      else
+        # Detached: the Omarchy widget pinned this commit. Rebuild it as
+        # is; a newer Oma Tab arrives with the next widget release.
+        echo "Source is pinned at $(git -C "$source_dir" rev-parse --short HEAD) by the Oma Tab widget; rebuilding that version."
+      fi
     fi
     exec "$source_dir/scripts/bootstrap.sh"
     ;;
