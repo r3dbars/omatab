@@ -109,10 +109,29 @@ esac
 
 # ---- 1. packages ----
 
+# Ollama may already be here from a package, from Ollama's own install
+# script, or in a container. pacman only knows about its own packages, so
+# asking it would say "missing" for an Ollama that is right there and then
+# fail on a conflicting install. Ask the machine instead.
+ollama_answers() {
+  curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1
+}
+ollama_present() {
+  command -v ollama >/dev/null || ollama_answers
+}
+
 if [[ $skip_packages != true ]]; then
   stage packages "Checking system packages"
   packages=(git cmake ninja gcc pkgconf fcitx5 jsoncpp curl jq
-    tesseract tesseract-data-eng grim "$ollama_package")
+    tesseract tesseract-data-eng grim)
+  if ollama_present; then
+    echo "Ollama is already installed; leaving it as it is."
+    if [[ $ollama_package != ollama ]] && ! pacman -Qq "$ollama_package" >/dev/null 2>&1; then
+      echo "If suggestions are slow, $ollama_package adds GPU acceleration."
+    fi
+  else
+    packages+=("$ollama_package")
+  fi
   mapfile -t missing < <(pacman -T "${packages[@]}" || true)
   if ((${#missing[@]} > 0)); then
     stage packages "Installing ${missing[*]}"
@@ -129,15 +148,25 @@ fi
 # ---- 2. Ollama ----
 
 stage ollama "Starting the Ollama service"
-if ! systemctl is-active --quiet ollama.service; then
-  sudo systemctl enable --now ollama.service
+if ! ollama_answers; then
+  # A packaged Ollama runs as ollama.service. Other installs may use a
+  # different unit or none at all, so a missing unit is not an error as
+  # long as something answers on the port.
+  if systemctl cat ollama.service >/dev/null 2>&1; then
+    systemctl is-active --quiet ollama.service ||
+      sudo systemctl enable --now ollama.service
+  fi
+  for _ in $(seq 1 30); do
+    ollama_answers && break
+    sleep 1
+  done
 fi
-for _ in $(seq 1 30); do
-  curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break
-  sleep 1
-done
-curl -fsS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 ||
-  { echo "Ollama did not answer on 127.0.0.1:11434." >&2; exit 1; }
+if ! ollama_answers; then
+  echo "Ollama is not answering on 127.0.0.1:11434." >&2
+  echo "Start it the way you normally do, then run this again." >&2
+  echo "For a packaged install: sudo systemctl enable --now ollama.service" >&2
+  exit 1
+fi
 
 # ---- 3. build and install ----
 
